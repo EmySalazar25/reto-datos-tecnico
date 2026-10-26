@@ -71,7 +71,7 @@ models:
           - cobertura_minima:
               arguments:
                 valor_desconocido: NO_IDENTIFICADO
-                # Línea base en carga_1: 98.24 %. Umbral provisional; empieza como advertencia.
+                # Línea base en carga_1: 98.18 %. Umbral provisional; empieza como advertencia.
                 minimo_pct: 95
               config:
                 severity: warn
