@@ -1,0 +1,36 @@
+version: 2
+
+sources:
+  - name: landing_opc
+    description: Réplica Airbyte CDC del sistema de operaciones (SQL Server). Cada fila es una versión.
+    schema: landing_opc
+    config:
+      meta:
+        sistema_origen: sql_server_operaciones
+        replica: airbyte_cdc
+        dueno_origen: por_confirmar
+      loaded_at_field: "cast(_airbyte_extracted_at as timestamp)"
+      freshness:
+        warn_after: {count: 24, period: hour}
+        error_after: {count: 48, period: hour}
+    tables:
+      - name: opc_planta
+        description: Catálogo de plantas.
+        config:
+          meta:
+            primary_key: [ClaPlanta]
+        columns:
+          - name: ClaPlanta
+            description: Identificador de la planta (PK).
+          - name: NomPlanta
+            description: Nombre de la planta.
+          - name: ClaPais
+            description: País (MX, US).
+          - name: _ab_cdc_lsn
+            description: Log Sequence Number del cambio en SQL Server.
+          - name: _ab_cdc_updated_at
+            description: Fecha y hora (UTC) en que se registró el cambio en el origen.
+          - name: _ab_cdc_deleted_at
+            description: Fecha y hora (UTC) en que se eliminó el registro.
+          - name: _airbyte_extracted_at
+            description: Fecha y hora (UTC) en que Airbyte extrajo la fila.

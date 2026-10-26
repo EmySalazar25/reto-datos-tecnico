@@ -1,0 +1,91 @@
+version: 2
+
+sources:
+  - name: landing_fle
+    description: >
+      Réplica Airbyte CDC del sistema de fletes (SQL Server). Cada fila es una versión de un
+      registro del origen; todas las columnas llegan como texto. Fechas de negocio en hora local
+      de planta (America/Monterrey); columnas de control en UTC.
+    schema: landing_fle
+    config:
+      meta:
+        sistema_origen: sql_server_fletes
+        replica: airbyte_cdc
+        dueno_origen: por_confirmar
+      loaded_at_field: "cast(_airbyte_extracted_at as timestamp)"
+      freshness:
+        warn_after: {count: 24, period: hour}
+        error_after: {count: 48, period: hour}
+    tables:
+      - name: fle_viaje
+        description: Viajes de embarque (cabecera).
+        config:
+          meta:
+            primary_key: [IdViaje]
+        columns:
+          - name: IdViaje
+            description: Identificador del viaje (PK).
+          - name: ClaPlanta
+            description: Planta que embarca. FK a opc_planta.
+          - name: FechaCompromiso
+            description: Fecha comprometida de entrega al cliente.
+          - name: FechaRealEmbarque
+            description: Fecha y hora en que el camión salió de planta. Nulo si no se capturó.
+          - name: FechaEmbarqueFinal
+            description: Fecha de cierre del documento de embarque.
+          - name: Estatus
+            description: PRO programado, TRA en tránsito, ENT entregado, CAN cancelado.
+          - name: CostoFlete
+            description: Costo del flete del viaje en MXN.
+          - name: _ab_cdc_lsn
+            description: Log Sequence Number del cambio en SQL Server. Orden real de los cambios.
+          - name: _ab_cdc_updated_at
+            description: Fecha y hora (UTC) en que se registró el cambio en el origen.
+          - name: _ab_cdc_deleted_at
+            description: Fecha y hora (UTC) en que se eliminó el registro. Vacío si no está eliminado.
+          - name: _airbyte_extracted_at
+            description: Fecha y hora (UTC) en que Airbyte extrajo la fila.
+
+      - name: fle_viaje_det
+        description: Partidas del viaje.
+        config:
+          meta:
+            primary_key: [IdViaje, IdPartida]
+        columns:
+          - name: IdViaje
+            description: FK a fle_viaje.
+          - name: IdPartida
+            description: Consecutivo de la partida dentro del viaje.
+          - name: ClaCliente
+            description: Cliente destino de la partida. FK a vta_cliente.
+          - name: ClaArticulo
+            description: Artículo embarcado.
+          - name: PesoKg
+            description: Peso documentado de la partida, en kilogramos.
+          - name: _ab_cdc_lsn
+            description: Log Sequence Number del cambio en SQL Server. Orden real de los cambios.
+          - name: _ab_cdc_updated_at
+            description: Fecha y hora (UTC) en que se registró el cambio en el origen.
+          - name: _ab_cdc_deleted_at
+            description: Fecha y hora (UTC) en que se eliminó el registro. Vacío si no está eliminado.
+          - name: _airbyte_extracted_at
+            description: Fecha y hora (UTC) en que Airbyte extrajo la fila.
+
+      - name: fle_entrega
+        description: Comprobante de entrega (POD).
+        config:
+          meta:
+            primary_key: [IdViaje]
+        columns:
+          - name: IdViaje
+            description: Viaje entregado (PK).
+          - name: FechaEntrega
+            description: Fecha y hora de entrega firmada por el cliente (hora local).
+          - name: _ab_cdc_lsn
+            description: Log Sequence Number del cambio en SQL Server. Orden real de los cambios.
+          - name: _ab_cdc_updated_at
+            description: Fecha y hora (UTC) en que se registró el cambio en el origen.
+          - name: _ab_cdc_deleted_at
+            description: Fecha y hora (UTC) en que se eliminó el registro. Vacío si no está eliminado.
+          - name: _airbyte_extracted_at
+            description: Fecha y hora (UTC) en que Airbyte extrajo la fila.

@@ -1,0 +1,38 @@
+version: 2
+
+sources:
+  - name: landing_vta
+    description: Réplica Airbyte CDC del sistema de ventas (SQL Server). Cada fila es una versión.
+    schema: landing_vta
+    config:
+      meta:
+        sistema_origen: sql_server_ventas
+        replica: airbyte_cdc
+        dueno_origen: por_confirmar
+      loaded_at_field: "cast(_airbyte_extracted_at as timestamp)"
+      freshness:
+        warn_after: {count: 24, period: hour}
+        error_after: {count: 48, period: hour}
+    tables:
+      - name: vta_cliente
+        description: Maestro de clientes. El segmento cambia en el tiempo; la historia viene en las versiones CDC.
+        config:
+          meta:
+            primary_key: [ClaCliente]
+        columns:
+          - name: ClaCliente
+            description: Identificador del cliente (PK).
+          - name: NomCliente
+            description: Razón social.
+          - name: Segmento
+            description: DISTRIBUIDOR, CONSTRUCTORA o INDUSTRIAL.
+          - name: ClaEstado
+            description: Estado de la república (o de EE.UU.) del cliente.
+          - name: _ab_cdc_lsn
+            description: Log Sequence Number del cambio en SQL Server.
+          - name: _ab_cdc_updated_at
+            description: Fecha y hora (UTC) en que se registró el cambio en el origen.
+          - name: _ab_cdc_deleted_at
+            description: Fecha y hora (UTC) en que se eliminó el registro.
+          - name: _airbyte_extracted_at
+            description: Fecha y hora (UTC) en que Airbyte extrajo la fila.
