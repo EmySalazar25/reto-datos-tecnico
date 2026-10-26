@@ -8,6 +8,13 @@ models:
       access: protected
       meta:
         grain: [id_viaje]
+      # Diseño para BigQuery: DuckDB ignora estas opciones; en BigQuery limitan los bytes leídos
+      # por mes de embarque y ordenan por planta, el filtro más común del tablero.
+      partition_by:
+        field: fecha_embarque
+        data_type: datetime
+        granularity: month
+      cluster_by: [cla_planta]
     columns:
       - name: id_viaje
         data_tests:
@@ -34,6 +41,11 @@ models:
       access: protected
       meta:
         grain: [id_viaje, id_partida]
+      partition_by:
+        field: fecha_embarque
+        data_type: datetime
+        granularity: month
+      cluster_by: [cla_planta, segmento_cliente]
     data_tests:
       - combinacion_unica:
           arguments:

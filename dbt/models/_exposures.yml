@@ -1,0 +1,20 @@
+version: 2
+
+# Consumidores declarados de los productos. La certificación los usa para responder
+# "¿qué tableros consumen este producto?" y para saber a quién afecta una falla.
+exposures:
+  - name: tablero_logistica
+    label: Tablero de desempeño de embarques
+    type: dashboard
+    maturity: medium
+    description: >
+      Tablero de la Dirección de Logística para la junta semanal de dirección. Lo construye BI
+      directamente sobre los marts publicados (ver docs/reto/requerimiento-negocio.md).
+    owner:
+      name: Dirección de Logística
+    depends_on:
+      - ref('embarques_mensual')
+      - ref('cumplimiento_entrega')
+    config:
+      meta:
+        herramienta: looker

@@ -24,6 +24,8 @@ models:
           freshness_hours: 24
           description: Disponible a diario antes de las 06:00 (America/Monterrey).
         technical_owner: ingenieria_de_datos
+        performance:
+          partition_exempt_reason: Tabla agregada por mes (decenas de filas por año); particionar no reduce bytes leídos.
         business_rules:
           - id: R1
             description: Fecha de embarque = real; si no se capturó (nula o 1900-01-01), la de cierre. En hora local de planta.
@@ -131,6 +133,8 @@ models:
           freshness_hours: 24
           description: Disponible a diario antes de las 06:00 (America/Monterrey).
         technical_owner: ingenieria_de_datos
+        performance:
+          partition_exempt_reason: Tabla agregada por mes (decenas de filas por año); particionar no reduce bytes leídos.
         business_rules:
           - id: R1
             description: El mes es el de la fecha de embarque (real o, si falta, de cierre), en hora local de planta.
