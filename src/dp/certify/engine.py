@@ -64,11 +64,17 @@ def _dimension_status(checks: list, dimension: str) -> str:
 def aggregate(checks: list) -> tuple:
     """Devuelve (estado, salud, razones). La distinción clave es cómo se recupera el producto."""
     health = _health(checks)
-    design_bad = [c.id for c in checks if c.phase == "design" and c.status in ("FAIL", "UNKNOWN")]
+
+    def ordered(phase: str) -> list:
+        # Primero lo que falló (causa) y después lo que quedó sin evidencia (consecuencia).
+        bad = [c for c in checks if c.phase == phase and c.status in ("FAIL", "UNKNOWN")]
+        return [c.id for c in sorted(bad, key=lambda c: (c.status != "FAIL", c.id))]
+
+    design_bad = ordered("design")
     if design_bad:
         return "NOT_CERTIFIED", health, design_bad
     if health in ("FAILED", "STALE", "UNKNOWN"):
-        return "DEGRADED", health, [c.id for c in checks if c.phase == "runtime" and c.status in ("FAIL", "UNKNOWN")]
+        return "DEGRADED", health, ordered("runtime")
     warns = [c.id for c in checks if c.status == "WARN"]
     if warns:
         return "CERTIFIED_WITH_WARNINGS", health, warns

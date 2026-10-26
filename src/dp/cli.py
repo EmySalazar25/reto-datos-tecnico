@@ -148,6 +148,27 @@ def cmd_certify_explain(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_profile(args: argparse.Namespace) -> int:
+    from dp import profile
+
+    declared = load_declared_sources(paths.DBT_DIR)
+    try:
+        result = profile.profile(paths.DUCKDB_PATH, args.tabla, declared)
+    except ValueError as exc:
+        print(f"profile: {exc}")
+        return 1
+    print(json.dumps(result, ensure_ascii=False, indent=2, default=str) if args.json else profile.render(result))
+    return 0
+
+
+def cmd_diagnose(args: argparse.Namespace) -> int:
+    from dp import chaos, diagnose
+
+    findings = diagnose.diagnose(paths.EVIDENCE_DIR, paths.DUCKDB_PATH, chaos.load_catalog())
+    print(json.dumps(findings, ensure_ascii=False, indent=2) if args.json else diagnose.render(findings))
+    return 0
+
+
 def cmd_chaos(args: argparse.Namespace) -> int:
     from dp import chaos
 
@@ -187,6 +208,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_idem = sub.add_parser("verify-idempotency", help="corre todo dos veces y compara filas y contenido")
     p_idem.set_defaults(func=cmd_verify_idempotency)
+
+    p_prof = sub.add_parser("profile", help="perfil compacto de una tabla (CDC, nulos, variantes, centinelas, tipos)")
+    p_prof.add_argument("tabla", help="fle_viaje, staging.stg_fle__viajes, embarques_mensual…")
+    p_prof.add_argument("--json", action="store_true")
+    p_prof.set_defaults(func=cmd_profile)
+
+    p_diag = sub.add_parser("diagnose", help="qué falló en la última corrida, con evidencia y mecanismos conocidos")
+    p_diag.add_argument("--json", action="store_true")
+    p_diag.set_defaults(func=cmd_diagnose)
 
     p_cert = sub.add_parser("certify", help="certificación de productos de datos")
     cert_sub = p_cert.add_subparsers(dest="accion", required=True)

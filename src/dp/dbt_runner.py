@@ -15,6 +15,9 @@ def dbt_env(db_path: Path | None = None, project_dir: Path | None = None) -> dic
     env["DP_DUCKDB_PATH"] = str(db_path or paths.DUCKDB_PATH)
     env["DBT_PROFILES_DIR"] = str(project_dir or paths.DBT_DIR)
     env.setdefault("DBT_SEND_ANONYMOUS_USAGE_STATS", "false")
+    # Sin códigos de color: los mensajes terminan en la evidencia y los lee un LLM.
+    env["DBT_USE_COLORS"] = "false"
+    env["DBT_USE_COLORS_FILE"] = "false"
     return env
 
 
