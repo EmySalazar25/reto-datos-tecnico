@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import sys
+from pathlib import Path
 
-from dp import dbt_runner, ingest, paths
+from dp import dbt_runner, evidence, idempotency, ingest, paths
 from dp.sources import load_declared_sources
+
+CERT_DIR = paths.ROOT / ".certification"
+POLICY = paths.ROOT / "standard" / "policy.yml"
 
 
 def cmd_ingest(args: argparse.Namespace) -> int:
@@ -23,11 +29,123 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     return 1 if rechazadas else 0
 
 
-def cmd_build(args: argparse.Namespace) -> int:
+def run_build(select=None) -> int:
+    started = evidence.utc_now()
     dbt_args = ["build"]
-    if args.select:
-        dbt_args += ["--select", args.select]
-    return dbt_runner.run_dbt(dbt_args)
+    if select:
+        dbt_args += ["--select", select]
+    code = dbt_runner.run_dbt(dbt_args)
+    # La evidencia se guarda aunque el build falle: una falla también es evidencia.
+    evidence.snapshot_build(paths.EVIDENCE_DIR, paths.DBT_DIR, paths.DUCKDB_PATH, paths.ROOT, code, started)
+    return code
+
+
+def cmd_build(args: argparse.Namespace) -> int:
+    return run_build(args.select)
+
+
+def cmd_verify_idempotency(args: argparse.Namespace) -> int:
+    declared = load_declared_sources(paths.DBT_DIR)
+    ingest.ingest_all(paths.DUCKDB_PATH, paths.DATA_DIR, declared)
+    if run_build() != 0:
+        print("la primera corrida falló: corrige el build antes de verificar idempotencia")
+        return 1
+    first = idempotency.table_fingerprints(paths.DUCKDB_PATH)
+    ingest.ingest_all(paths.DUCKDB_PATH, paths.DATA_DIR, declared)
+    run_build()
+    second = idempotency.table_fingerprints(paths.DUCKDB_PATH)
+    report = idempotency.compare(first, second)
+    report["generated_at"] = evidence.utc_now()
+    evidence.write_json(paths.EVIDENCE_DIR / "idempotencia.json", report)
+    print(f"idempotencia: {report['status']} · {len(report['tablas'])} tablas comparadas")
+    for t in report["tablas_con_cambios"]:
+        print(f"  cambió: {t}")
+    return 0 if report["status"] == "PASS" else 1
+
+
+def cmd_certify_run(args: argparse.Namespace) -> int:
+    from dp.certify import engine, render
+
+    result = engine.certify(
+        paths.EVIDENCE_DIR,
+        POLICY,
+        context=args.context,
+        as_of=args.as_of,
+        base_manifest=Path(args.base_manifest) if args.base_manifest else None,
+        base_policy=Path(args.base_policy) if args.base_policy else None,
+        approved_by=args.aprobado_por,
+    )
+    out = Path(args.salida) if args.salida else CERT_DIR
+    render.write_outputs(result, out)
+    summary = (out / "resumen.md").read_text(encoding="utf-8")
+    step_summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if step_summary:
+        with open(step_summary, "a", encoding="utf-8") as fh:
+            fh.write(summary)
+    for p in result["products"]:
+        print(f"{p['product']['id']:<24} {p['status']:<24} salud {p['health']:<9} razones: {', '.join(p['reasons']) or '-'}")
+    print(f"detalle: {out}/<producto>.json · resumen: {out}/resumen.md")
+    return 1 if any(p["status"] == "NOT_CERTIFIED" for p in result["products"]) else 0
+
+
+def _load_cert(product: str) -> dict:
+    path = CERT_DIR / f"{product}.json"
+    if not path.exists():
+        raise SystemExit(f"no hay certificación de {product}: corre `dp certify run`")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def cmd_certify_status(args: argparse.Namespace) -> int:
+    from dp.certify import render
+
+    if args.producto:
+        print(render.agent_status(_load_cert(args.producto)))
+        return 0
+    catalog = CERT_DIR / "catalogo.json"
+    if not catalog.exists():
+        print("no hay certificaciones: corre `dp certify run`")
+        return 1
+    data = json.loads(catalog.read_text(encoding="utf-8"))
+    for p in data["products"]:
+        print(f"{p['product']:<24} {p['status']:<24} salud {p['health']:<9} razones: {', '.join(p['reasons']) or '-'}")
+    return 0
+
+
+def _failing_rows(compiled_sql: str, limit: int = 5) -> dict:
+    import duckdb
+
+    con = duckdb.connect(str(paths.DUCKDB_PATH), read_only=True)
+    try:
+        cur = con.execute(f"select * from ({compiled_sql}) as t limit {limit}")
+        cols = [d[0] for d in cur.description]
+        return {"columnas": cols, "filas": [[str(v) for v in row] for row in cur.fetchall()]}
+    except Exception as exc:  # la evidencia no debe romper la explicación
+        return {"error": str(exc).splitlines()[0]}
+    finally:
+        con.close()
+
+
+def cmd_certify_explain(args: argparse.Namespace) -> int:
+    prod = _load_cert(args.producto)
+    check = next((c for c in prod["checks"] if c["id"] == args.check), None)
+    if check is None:
+        print(f"{args.check} no existe en la certificación de {args.producto}")
+        return 1
+    manifest = evidence.load_json(paths.EVIDENCE_DIR / "manifest.json") or {}
+    nodes = {**manifest.get("nodes", {}), **manifest.get("unit_tests", {})}
+    detail = dict(check)
+    enriched = []
+    for item in check.get("evidence", []):
+        item = dict(item)
+        node = nodes.get(item.get("ref", ""))
+        if node:
+            item["archivo"] = node.get("original_file_path")
+            if node.get("resource_type") == "test" and node.get("compiled_code"):
+                item["muestra_filas_que_fallan"] = _failing_rows(node["compiled_code"])
+        enriched.append(item)
+    detail["evidence"] = enriched
+    print(json.dumps(detail, ensure_ascii=False, indent=2))
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -38,9 +156,33 @@ def build_parser() -> argparse.ArgumentParser:
     p_ingest.add_argument("--entrega", help="solo esta entrega (p. ej. carga_2)")
     p_ingest.set_defaults(func=cmd_ingest)
 
-    p_build = sub.add_parser("build", help="dbt build: modelos, tests y contratos")
+    p_build = sub.add_parser("build", help="dbt build (modelos, tests y contratos) + snapshot de evidencia")
     p_build.add_argument("--select", help="selector de dbt")
     p_build.set_defaults(func=cmd_build)
+
+    p_idem = sub.add_parser("verify-idempotency", help="corre todo dos veces y compara filas y contenido")
+    p_idem.set_defaults(func=cmd_verify_idempotency)
+
+    p_cert = sub.add_parser("certify", help="certificación de productos de datos")
+    cert_sub = p_cert.add_subparsers(dest="accion", required=True)
+
+    p_run = cert_sub.add_parser("run", help="evalúa la evidencia contra la política")
+    p_run.add_argument("--context", default="run", choices=["run", "ci"])
+    p_run.add_argument("--as-of", help="instante de evaluación (ISO UTC); por omisión, reloj replay")
+    p_run.add_argument("--base-manifest", help="manifest de la versión base (CI) para GOV-07")
+    p_run.add_argument("--base-policy", help="policy.yml de la versión base (CI) para GOV-07")
+    p_run.add_argument("--aprobado-por", help="aprobador humano registrado por el environment de CI")
+    p_run.add_argument("--salida", help="directorio de salida (por omisión .certification/)")
+    p_run.set_defaults(func=cmd_certify_run)
+
+    p_status = cert_sub.add_parser("status", help="resumen compacto (para personas y agente)")
+    p_status.add_argument("producto", nargs="?")
+    p_status.set_defaults(func=cmd_certify_status)
+
+    p_explain = cert_sub.add_parser("explain", help="evidencia completa de un check")
+    p_explain.add_argument("producto")
+    p_explain.add_argument("check")
+    p_explain.set_defaults(func=cmd_certify_explain)
 
     return parser
 

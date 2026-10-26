@@ -1,0 +1,46 @@
+# Política del estándar como código.
+#
+# Define qué checks exige cada contexto, con qué severidad y con qué umbrales.
+# Cambiar este archivo debilita o endurece el estándar: es un cambio gobernado (GOV-07)
+# que requiere revisión humana (CODEOWNERS + environment de aprobación en CI).
+
+version: 1
+
+# Contextos de evaluación.
+#   run: operación del pipeline (local o programada). Los tests de datos evalúan los datos
+#        recibidos: si fallan, el producto queda DEGRADED (la versión no cambió).
+#   ci:  validación de una versión candidata (PR) sobre los datos de referencia. Cualquier
+#        test que falle significa que esa versión no cumple: NOT_CERTIFIED.
+contexts:
+  run:
+    clock: replay
+    environment: local-duckdb
+    required: [TST-01, TST-02, TST-03, TST-04, TST-05, TST-06, GOV-01, GOV-02, GOV-03, GOV-04, GOV-05, GOV-06, OBS-01, OBS-02, OBS-03, OBS-04, OBS-06, PRF-01, PRF-02]
+  ci:
+    clock: replay
+    environment: local-duckdb
+    required: [TST-01, TST-02, TST-03, TST-04, TST-05, TST-06, TST-08, TST-09, GOV-01, GOV-02, GOV-03, GOV-04, GOV-05, GOV-06, GOV-07, OBS-01, OBS-02, OBS-03, OBS-04, OBS-06, PRF-01, PRF-02]
+
+# Severidad por check. Por omisión todo es `error` (bloquea). `warn` convierte un FAIL en WARN.
+# Bajar un check de `error` a `warn` es debilitar el estándar.
+checks:
+  TST-09:
+    severity: warn   # Sube a error cuando todas las reglas críticas tengan escenario de chaos.
+  GOV-06:
+    severity: warn   # Un producto sin consumidores declarados se puede publicar, con advertencia.
+  PRF-01:
+    severity: warn   # Diseño para BigQuery: empieza como advertencia.
+
+# Volumen por entrega (OBS-03). Sin historial suficiente no se juzga la banda.
+volume:
+  min_deliveries: 5
+  band_k_mad: 3      # Provisional: se recalibra cuando haya historial.
+
+# Presupuestos de performance (PRF-02). Vacíos a propósito: primero se mide la línea base.
+budgets: {}
+
+# Modelo de precios para costo estimado en BigQuery. Sin valores hasta tener entorno real.
+pricing:
+  model: null
+  usd_per_tib: null
+  as_of: null
