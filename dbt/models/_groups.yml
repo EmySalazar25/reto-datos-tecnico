@@ -1,0 +1,7 @@
+version: 2
+
+# Dominios de negocio. Cada producto publicado pertenece a uno y hereda su dueño.
+groups:
+  - name: logistica
+    owner:
+      name: Dirección de Logística

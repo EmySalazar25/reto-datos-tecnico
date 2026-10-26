@@ -1,0 +1,82 @@
+version: 2
+
+models:
+  - name: fct_viajes
+    description: Hecho de viajes embarcados. Grano un viaje. Único lugar donde vive el costo de flete.
+    config:
+      group: logistica
+      access: protected
+      meta:
+        grain: [id_viaje]
+    columns:
+      - name: id_viaje
+        data_tests:
+          - not_null
+          - unique
+      - name: cla_planta
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_planta')
+                field: cla_planta
+      - name: anio_mes
+        data_tests:
+          - not_null
+      - name: costo_flete_mxn
+        data_tests:
+          - not_null
+
+  - name: fct_embarques
+    description: Hecho de partidas embarcadas. Grano viaje × partida. No lleva costo de flete.
+    config:
+      group: logistica
+      access: protected
+      meta:
+        grain: [id_viaje, id_partida]
+    data_tests:
+      - combinacion_unica:
+          arguments:
+            columnas: [id_viaje, id_partida]
+          config:
+            tags: [engineering]
+            meta:
+              verifica: sin_fanout_en_join_scd2
+    columns:
+      - name: id_viaje
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fct_viajes')
+                field: id_viaje
+      - name: segmento_cliente
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [DISTRIBUIDOR, CONSTRUCTORA, INDUSTRIAL, NO_IDENTIFICADO]
+          - cobertura_minima:
+              arguments:
+                valor_desconocido: NO_IDENTIFICADO
+                # Línea base en carga_1: 98.24 %. Umbral provisional; empieza como advertencia.
+                minimo_pct: 95
+              config:
+                severity: warn
+                tags: [engineering]
+                meta:
+                  verifica: cobertura_join_cliente
+      - name: toneladas
+        data_tests:
+          - not_null
+
+  - name: dim_planta
+    description: Dimensión de plantas. Grano una planta.
+    config:
+      group: logistica
+      access: protected
+    columns:
+      - name: cla_planta
+        data_tests:
+          - not_null
+          - unique

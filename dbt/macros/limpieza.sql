@@ -63,3 +63,19 @@
 {% macro bigquery__anio_mes(col) -%}
     format_date('%Y-%m', date({{ col }}))
 {%- endmacro %}
+
+{#
+  Convierte una hora local sin zona de una zona horaria a otra (p. ej. hora de Monterrey a
+  hora local de la planta de Houston). `zona_destino` puede ser una columna.
+#}
+{% macro local_a_local(col, zona_origen, zona_destino_sql) -%}
+    {{ return(adapter.dispatch('local_a_local')(col, zona_origen, zona_destino_sql)) }}
+{%- endmacro %}
+
+{% macro default__local_a_local(col, zona_origen, zona_destino_sql) -%}
+    timezone({{ zona_destino_sql }}, timezone('{{ zona_origen }}', {{ col }}))
+{%- endmacro %}
+
+{% macro bigquery__local_a_local(col, zona_origen, zona_destino_sql) -%}
+    datetime(timestamp({{ col }}, '{{ zona_origen }}'), {{ zona_destino_sql }})
+{%- endmacro %}

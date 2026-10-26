@@ -1,0 +1,193 @@
+version: 2
+
+# Productos de datos publicados del dominio Logística.
+# Un producto es un modelo `access: public` con contrato aplicado. Su metadata vive aquí y
+# en ningún otro lugar: la certificación la lee de este archivo.
+
+models:
+  - name: embarques_mensual
+    description: >
+      Toneladas embarcadas, número de viajes y costo de flete por planta y mes. Consumido por
+      el tablero de Logística. Contrato en docs/reto/contrato-marts.md.
+    config:
+      group: logistica
+      access: public
+      contract:
+        enforced: true
+      meta:
+        grain: [anio_mes, cla_planta]
+        primary_key: [anio_mes, cla_planta]
+        contract_version: 1
+        criticality: alta
+        # Supuesto S5: el requerimiento no fija SLA; se propone uno para la junta de los lunes.
+        sla:
+          freshness_hours: 24
+          description: Disponible a diario antes de las 06:00 (America/Monterrey).
+        technical_owner: ingenieria_de_datos
+        business_rules:
+          - id: R1
+            description: Fecha de embarque = real; si no se capturó (nula o 1900-01-01), la de cierre. En hora local de planta.
+          - id: R2
+            description: Solo cuentan los viajes en estatus TRA o ENT.
+          - id: R3
+            description: Toneladas = peso documentado de las partidas / 1,000.
+          - id: R4
+            description: El costo de flete es por viaje y se cuenta una sola vez, aunque el viaje tenga varias partidas.
+    data_tests:
+      - combinacion_unica:
+          arguments:
+            columnas: [anio_mes, cla_planta]
+          config:
+            meta:
+              verifica: grano
+      - no_fanout:
+          arguments:
+            column_name: costo_flete_mxn
+            referencia: ref('fct_viajes')
+            columna_referencia: costo_flete_mxn
+            decimales: 2
+          config:
+            tags: [engineering]
+            meta:
+              rule: R4
+      - no_fanout:
+          arguments:
+            column_name: toneladas_embarcadas
+            referencia: ref('fct_embarques')
+            columna_referencia: toneladas
+            decimales: 3
+          config:
+            tags: [engineering]
+            meta:
+              rule: R3
+      - no_fanout:
+          arguments:
+            column_name: num_viajes
+            referencia: ref('fct_viajes')
+            columna_referencia: "1"
+            decimales: 0
+          config:
+            tags: [engineering]
+            meta:
+              rule: R2
+    columns:
+      - name: anio_mes
+        description: Mes de la fecha de embarque, formato YYYY-MM.
+        data_type: varchar
+        constraints:
+          - type: not_null
+        data_tests:
+          - not_null
+      - name: cla_planta
+        description: Planta.
+        data_type: integer
+        constraints:
+          - type: not_null
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_planta')
+                field: cla_planta
+      - name: nom_planta
+        description: Nombre de la planta.
+        data_type: varchar
+        data_tests:
+          - not_null
+      - name: num_viajes
+        description: Viajes embarcados (TRA o ENT).
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: toneladas_embarcadas
+        description: Suma del peso documentado ÷ 1,000. Redondeo a 3 decimales.
+        data_type: decimal(18,3)
+        data_tests:
+          - not_null
+      - name: costo_flete_mxn
+        description: Suma del costo de flete de los viajes, en MXN. Redondeo a 2 decimales.
+        data_type: decimal(18,2)
+        data_tests:
+          - not_null
+      - name: costo_flete_por_ton
+        description: costo_flete_mxn / toneladas_embarcadas, con las columnas publicadas. Redondeo a 2 decimales.
+        data_type: decimal(18,2)
+
+  - name: cumplimiento_entrega
+    description: >
+      Porcentaje de toneladas entregadas a tiempo por segmento de cliente y mes. Solo partidas
+      cuyo viaje ya tiene POD. Contrato en docs/reto/contrato-marts.md.
+    config:
+      group: logistica
+      access: public
+      contract:
+        enforced: true
+      meta:
+        grain: [anio_mes, segmento_cliente]
+        primary_key: [anio_mes, segmento_cliente]
+        contract_version: 1
+        criticality: alta
+        sla:
+          freshness_hours: 24
+          description: Disponible a diario antes de las 06:00 (America/Monterrey).
+        technical_owner: ingenieria_de_datos
+        business_rules:
+          - id: R1
+            description: El mes es el de la fecha de embarque (real o, si falta, de cierre), en hora local de planta.
+          - id: R2
+            description: Solo cuentan los viajes en estatus TRA o ENT.
+          - id: R5
+            description: A tiempo si la fecha (no la hora) del POD es menor o igual a la fecha compromiso. Solo viajes con POD.
+          - id: R6
+            description: Segmento vigente el día del embarque, no el actual.
+          - id: R7
+            description: Partidas con cliente que no existe en el maestro se reportan como NO_IDENTIFICADO; no se pierden.
+    data_tests:
+      - combinacion_unica:
+          arguments:
+            columnas: [anio_mes, segmento_cliente]
+          config:
+            meta:
+              verifica: grano
+      - no_fanout:
+          arguments:
+            column_name: toneladas_entregadas
+            referencia: ref('fct_embarques')
+            columna_referencia: toneladas
+            decimales: 3
+            condicion_referencia: tiene_pod
+          config:
+            tags: [engineering]
+            meta:
+              rule: R7
+    columns:
+      - name: anio_mes
+        description: Mes de la fecha de embarque, formato YYYY-MM.
+        data_type: varchar
+        constraints:
+          - type: not_null
+        data_tests:
+          - not_null
+      - name: segmento_cliente
+        description: DISTRIBUIDOR, CONSTRUCTORA, INDUSTRIAL o NO_IDENTIFICADO. Segmento vigente el día del embarque.
+        data_type: varchar
+        constraints:
+          - type: not_null
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [DISTRIBUIDOR, CONSTRUCTORA, INDUSTRIAL, NO_IDENTIFICADO]
+      - name: toneladas_entregadas
+        description: Toneladas de partidas cuyo viaje ya tiene POD.
+        data_type: decimal(18,3)
+        data_tests:
+          - not_null
+      - name: toneladas_a_tiempo
+        description: De las anteriores, las entregadas a tiempo.
+        data_type: decimal(18,3)
+        data_tests:
+          - not_null
+      - name: pct_a_tiempo
+        description: 100 * toneladas_a_tiempo / toneladas_entregadas (0 a 100). Redondeo a 2 decimales.
+        data_type: decimal(18,2)

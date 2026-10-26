@@ -23,3 +23,15 @@ models:
       +materialized: table
     mart:
       +materialized: table
+      logistica:
+        +schema: mart_logistica
+
+vars:
+  # Regla 2: qué estatus cuentan como embarcado.
+  estatus_embarcado: ["TRA", "ENT"]
+  # Zona horaria en la que el origen captura las fechas (diccionario de landing).
+  zona_horaria_origen: "America/Monterrey"
+  # Supuesto S2: hora local de cada planta según su país (el origen no la trae).
+  zona_horaria_por_pais:
+    MX: "America/Monterrey"
+    US: "America/Chicago"

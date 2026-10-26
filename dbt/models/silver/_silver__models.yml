@@ -1,0 +1,64 @@
+version: 2
+
+models:
+  - name: int_clientes__vigencia_segmento
+    description: >
+      Segmento de cada cliente con su vigencia (SCD2) construido desde la historia CDC. Una fila
+      por cliente y periodo. `vigente_desde` nulo = desde la primera versión conocida;
+      `vigente_hasta` nulo = vigente hoy. Fechas en hora local.
+    config:
+      group: logistica
+      access: protected
+    data_tests:
+      - combinacion_unica:
+          arguments:
+            columnas: [cla_cliente, vigente_desde]
+          config:
+            tags: [engineering]
+      - vigencias_continuas:
+          arguments:
+            llave: cla_cliente
+            desde: vigente_desde
+            hasta: vigente_hasta
+          config:
+            tags: [engineering]
+            meta:
+              verifica: scd2_sin_traslapes
+    columns:
+      - name: cla_cliente
+        data_tests:
+          - not_null
+      - name: segmento
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [DISTRIBUIDOR, CONSTRUCTORA, INDUSTRIAL]
+              config:
+                tags: [engineering]
+
+  - name: int_viajes__embarcados
+    description: >
+      Viajes que cuentan como embarcados (TRA, ENT) con su fecha de embarque en hora local de
+      planta y su puntualidad. Una fila por viaje.
+    config:
+      group: logistica
+      access: protected
+    columns:
+      - name: id_viaje
+        data_tests:
+          - not_null
+          - unique
+      - name: fecha_embarque
+        data_tests:
+          - not_null
+          - sin_fecha_centinela:
+              config:
+                tags: [engineering]
+      - name: estatus
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [TRA, ENT]
+      - name: a_tiempo
+        description: Nulo cuando el viaje aún no tiene POD.
