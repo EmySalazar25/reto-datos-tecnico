@@ -77,13 +77,14 @@ def aggregate(checks: list) -> tuple:
 
 def evaluate_product(ctx: Ctx, product, required: set, severities: dict) -> list:
     results = []
+    data_phase = ctx.policy["contexts"][ctx.context].get("data_tests_phase", "runtime")
     for check_id in sorted(REGISTRY):
         spec = REGISTRY[check_id]
         status, summary, ev, counts = spec["fn"](ctx, product)
         phase = spec["phase"]
         if phase == "data":
-            # El mismo test evalúa la versión en CI y los datos recibidos en operación.
-            phase = "design" if ctx.context == "ci" else "runtime"
+            # El mismo test juzga la versión (CI, candidata) o los datos recibidos (operación).
+            phase = data_phase
         severity = severities.get(check_id, "error")
         if check_id not in required and status == "UNKNOWN":
             status, summary = "NOT_APPLICABLE", f"no exigido en contexto {ctx.context}: {summary}"

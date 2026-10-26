@@ -148,6 +148,31 @@ def cmd_certify_explain(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_chaos(args: argparse.Namespace) -> int:
+    from dp import chaos
+
+    try:
+        if args.accion == "run":
+            payload = chaos.run_all(ids=args.escenario or None, keep=args.conservar)
+            for line in chaos.summary_lines(payload):
+                print(line)
+            return 0 if all(e["estado"] == "DETECTADO" for e in payload["escenarios"]) else 1
+        if args.accion == "list":
+            for s in chaos.load_catalog():
+                print(f"{s['id']} {s['tipo']:<7} {s['nombre']:<38} reglas {s.get('reglas') or '-'}")
+            return 0
+        if args.accion == "inject":
+            print(chaos.inject(args.escenario_id))
+            return 0
+        if args.accion == "restore":
+            print(chaos.restore(args.escenario_id))
+            return 0
+    except chaos.ChaosError as exc:
+        print(f"chaos: {exc}")
+        return 2
+    return 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="dp", description="Estándar de ingeniería de datos.")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -167,7 +192,7 @@ def build_parser() -> argparse.ArgumentParser:
     cert_sub = p_cert.add_subparsers(dest="accion", required=True)
 
     p_run = cert_sub.add_parser("run", help="evalúa la evidencia contra la política")
-    p_run.add_argument("--context", default="run", choices=["run", "ci"])
+    p_run.add_argument("--context", default="run", choices=["run", "candidate", "ci"])
     p_run.add_argument("--as-of", help="instante de evaluación (ISO UTC); por omisión, reloj replay")
     p_run.add_argument("--base-manifest", help="manifest de la versión base (CI) para GOV-07")
     p_run.add_argument("--base-policy", help="policy.yml de la versión base (CI) para GOV-07")
@@ -183,6 +208,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_explain.add_argument("producto")
     p_explain.add_argument("check")
     p_explain.set_defaults(func=cmd_certify_explain)
+
+    p_chaos = sub.add_parser("chaos", help="rompe a propósito y verifica que el estándar lo detecta")
+    chaos_sub = p_chaos.add_subparsers(dest="accion", required=True)
+    p_crun = chaos_sub.add_parser("run", help="ejecuta escenarios en un sandbox aislado")
+    p_crun.add_argument("escenario", nargs="*", help="IDs (por omisión, todos)")
+    p_crun.add_argument("--conservar", action="store_true", help="no borrar el sandbox (para depurar)")
+    p_crun.set_defaults(func=cmd_chaos)
+    p_clist = chaos_sub.add_parser("list", help="lista el catálogo")
+    p_clist.set_defaults(func=cmd_chaos)
+    p_cinj = chaos_sub.add_parser("inject", help="aplica un escenario al repo de trabajo (demo)")
+    p_cinj.add_argument("escenario_id")
+    p_cinj.set_defaults(func=cmd_chaos)
+    p_cres = chaos_sub.add_parser("restore", help="revierte un escenario inyectado")
+    p_cres.add_argument("escenario_id")
+    p_cres.set_defaults(func=cmd_chaos)
 
     return parser
 

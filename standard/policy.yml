@@ -6,19 +6,28 @@
 
 version: 1
 
-# Contextos de evaluación.
-#   run: operación del pipeline (local o programada). Los tests de datos evalúan los datos
-#        recibidos: si fallan, el producto queda DEGRADED (la versión no cambió).
-#   ci:  validación de una versión candidata (PR) sobre los datos de referencia. Cualquier
-#        test que falle significa que esa versión no cumple: NOT_CERTIFIED.
+# Contextos de evaluación. `data_tests_phase` define qué juzga un test de datos que falla:
+#   runtime: los datos recibidos (la versión no cambió) → el producto queda DEGRADED.
+#   design:  la versión (código nuevo sobre datos de referencia) → NOT_CERTIFIED.
+#
+#   run:       operación del pipeline (local o programada). El código solo llega por CI.
+#   candidate: versión candidata evaluada fuera de CI (antes de abrir un PR, o chaos de código).
+#   ci:        validación de un PR: además exige idempotencia, chaos y control de cambios.
 contexts:
   run:
     clock: replay
     environment: local-duckdb
+    data_tests_phase: runtime
+    required: [TST-01, TST-02, TST-03, TST-04, TST-05, TST-06, GOV-01, GOV-02, GOV-03, GOV-04, GOV-05, GOV-06, OBS-01, OBS-02, OBS-03, OBS-04, OBS-06, PRF-01, PRF-02]
+  candidate:
+    clock: replay
+    environment: local-duckdb
+    data_tests_phase: design
     required: [TST-01, TST-02, TST-03, TST-04, TST-05, TST-06, GOV-01, GOV-02, GOV-03, GOV-04, GOV-05, GOV-06, OBS-01, OBS-02, OBS-03, OBS-04, OBS-06, PRF-01, PRF-02]
   ci:
     clock: replay
     environment: local-duckdb
+    data_tests_phase: design
     required: [TST-01, TST-02, TST-03, TST-04, TST-05, TST-06, TST-08, TST-09, GOV-01, GOV-02, GOV-03, GOV-04, GOV-05, GOV-06, GOV-07, OBS-01, OBS-02, OBS-03, OBS-04, OBS-06, PRF-01, PRF-02]
 
 # Severidad por check. Por omisión todo es `error` (bloquea). `warn` convierte un FAIL en WARN.
