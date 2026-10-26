@@ -4,8 +4,9 @@ unit_tests:
   - name: ut_cdc_ultima_version_por_lsn_y_borrados
     description: >
       Dos versiones con el mismo _ab_cdc_updated_at: gana la de mayor LSN, comparado como número
-      (10 > 9). Si la última versión es un borrado, el viaje desaparece. El estatus se normaliza
-      y la fecha centinela 1900-01-01 se vuelve nula.
+      (10 > 9). El LSN manda aunque el timestamp diga otra cosa (viaje 4). Si la última versión es
+      un borrado, el viaje desaparece. El estatus se normaliza y la fecha centinela 1900-01-01 se
+      vuelve nula.
     model: stg_fle__viajes
     config:
       tags: [engineering]
@@ -23,7 +24,10 @@ unit_tests:
           - {IdViaje: "2", ClaPlanta: "1", Estatus: "TRA", CostoFlete: "50.00", _ab_cdc_lsn: "20", _ab_cdc_updated_at: "2026-01-06T10:00:00.000Z"}
           - {IdViaje: "2", ClaPlanta: "1", Estatus: "TRA", CostoFlete: "50.00", _ab_cdc_lsn: "21", _ab_cdc_updated_at: "2026-01-07T10:00:00.000Z", _ab_cdc_deleted_at: "2026-01-07T10:00:00.000Z"}
           - {IdViaje: "3", ClaPlanta: "2", Estatus: " tra ", CostoFlete: "80.00", FechaRealEmbarque: "1900-01-01 00:00:00", FechaEmbarqueFinal: "2026-01-08 08:00:00", _ab_cdc_lsn: "30", _ab_cdc_updated_at: "2026-01-08T10:00:00.000Z"}
+          - {IdViaje: "4", ClaPlanta: "1", Estatus: "ENT", CostoFlete: "70.00", _ab_cdc_lsn: "40", _ab_cdc_updated_at: "2026-01-09T10:05:00.000Z"}
+          - {IdViaje: "4", ClaPlanta: "1", Estatus: "ENT", CostoFlete: "75.00", _ab_cdc_lsn: "41", _ab_cdc_updated_at: "2026-01-09T10:00:00.000Z"}
     expect:
       rows:
         - {id_viaje: 1, estatus: ENT, costo_flete_mxn: 115.00, fecha_real_embarque: null}
         - {id_viaje: 3, estatus: TRA, costo_flete_mxn: 80.00, fecha_real_embarque: null}
+        - {id_viaje: 4, estatus: ENT, costo_flete_mxn: 75.00, fecha_real_embarque: null}
