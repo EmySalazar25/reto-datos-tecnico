@@ -1,0 +1,221 @@
+# Catálogo de chaos: fallas conocidas que el estándar debe detectar.
+#
+# Cada escenario declara qué rompe, por qué mecanismo, qué debe detectarlo y en qué estado
+# debe quedar la certificación. `dp chaos run` lo ejecuta en un sandbox (copia aislada del
+# proyecto y de los datos) y marca DETECTADO o ESCAPÓ. Un ESCAPÓ es un hueco del estándar.
+#
+# Tipos de inyección:
+#   codigo: reemplaza un fragmento exacto de un archivo de dbt (simula un PR con un bug).
+#   datos:  agrega una entrega nueva a la réplica (simula lo que manda el origen).
+#   reloj:  evalúa la certificación en un instante posterior sin entregas nuevas.
+
+escenarios:
+  - id: CH-01
+    nombre: costo_sumado_por_partida
+    tipo: codigo
+    reglas: [R4]
+    rompe: Alguien une viajes con partidas para calcular el costo mensual.
+    mecanismo: >
+      Fan-out. El costo es un monto por viaje; al unirlo con sus partidas se repite una vez por
+      partida y el total se infla sin que ningún join marque error.
+    inyeccion:
+      archivo: models/mart/logistica/embarques_mensual.sql
+      buscar: |
+            select
+                anio_mes,
+                cla_planta,
+                count(*) as num_viajes,
+                sum(costo_flete_mxn) as costo_flete_mxn
+            from {{ ref('fct_viajes') }}
+            group by anio_mes, cla_planta
+      reemplazar: |
+            select
+                v.anio_mes,
+                v.cla_planta,
+                count(distinct v.id_viaje) as num_viajes,
+                sum(v.costo_flete_mxn) as costo_flete_mxn
+            from {{ ref('fct_viajes') }} as v
+            inner join {{ ref('fct_embarques') }} as e on v.id_viaje = e.id_viaje
+            group by v.anio_mes, v.cla_planta
+    debe_detectar:
+      tests: [r4_costo_por_viaje_se_cuenta_una_vez, no_fanout_embarques_mensual_costo_flete_mxn, ut_r4_costo_de_un_viaje]
+    estado_esperado:
+      embarques_mensual: NOT_CERTIFIED
+
+  - id: CH-02
+    nombre: cdc_sin_deduplicar
+    tipo: codigo
+    reglas: [R3, R4]
+    rompe: La macro de CDC deja pasar todas las versiones en lugar de la última.
+    mecanismo: >
+      Duplicado CDC. Cada cambio en el origen llega como una fila nueva; sin quedarse con la
+      última versión por llave, un viaje cuenta tantas veces como cambios tuvo y reaparecen
+      versiones previas de registros borrados.
+    inyeccion:
+      archivo: macros/cdc.sql
+      # Se compara línea por línea sin indentación.
+      buscar: |
+            order by {{ cdc_orden() }}
+            ) = 1
+            ) as ultima_version
+      reemplazar: |
+            order by {{ cdc_orden() }}
+            ) >= 1
+            ) as ultima_version
+    debe_detectar:
+      tests: [unique_stg_fle__viajes_id_viaje, combinacion_unica_stg_fle__partidas, ut_cdc_ultima_version]
+    estado_esperado:
+      embarques_mensual: NOT_CERTIFIED
+      cumplimiento_entrega: NOT_CERTIFIED
+
+  - id: CH-03
+    nombre: clientes_no_identificados_se_pierden
+    tipo: codigo
+    reglas: [R7, R3]
+    rompe: El segmento del cliente se une con inner join en lugar de left join.
+    mecanismo: >
+      Pérdida por join. Las partidas de clientes que no existen en el maestro desaparecen sin
+      error; las toneladas de NO_IDENTIFICADO quedan en cero y el total se encoge.
+    inyeccion:
+      archivo: models/gold/fct_embarques.sql
+      buscar: "left join {{ ref('int_clientes__vigencia_segmento') }} as s"
+      reemplazar: "inner join {{ ref('int_clientes__vigencia_segmento') }} as s"
+    debe_detectar:
+      tests: [r7_no_identificados_no_se_pierden, ut_r7_cliente_fuera_del_maestro, r3_toneladas_se_conservan]
+    estado_esperado:
+      cumplimiento_entrega: NOT_CERTIFIED
+      embarques_mensual: NOT_CERTIFIED
+
+  - id: CH-04
+    nombre: segmento_actual_en_vez_de_historico
+    tipo: codigo
+    reglas: [R6]
+    rompe: Se usa el segmento vigente hoy en lugar del vigente el día del embarque.
+    mecanismo: >
+      Historia ignorada. Los clientes que cambiaron de segmento arrastran todas sus toneladas
+      históricas al segmento nuevo; el total cuadra pero la distribución por segmento no.
+    inyeccion:
+      archivo: models/gold/fct_embarques.sql
+      buscar: |
+            and (s.vigente_desde is null or s.vigente_desde <= cast(p.fecha_embarque as date))
+            and (s.vigente_hasta is null or cast(p.fecha_embarque as date) < s.vigente_hasta)
+      reemplazar: |
+            and s.es_vigente
+    debe_detectar:
+      tests: [r6_segmento_vigente_en_fecha_de_embarque, ut_r6_partida_toma_el_segmento]
+    estado_esperado:
+      cumplimiento_entrega: NOT_CERTIFIED
+
+  - id: CH-05
+    nombre: a_tiempo_con_fecha_y_hora
+    tipo: codigo
+    reglas: [R5]
+    rompe: La puntualidad compara fecha y hora del POD contra la fecha compromiso.
+    mecanismo: >
+      Definición de negocio mal implementada. La fecha compromiso viene a medianoche: comparar
+      con la hora marca como tarde casi cualquier entrega del mismo día.
+    inyeccion:
+      archivo: models/silver/int_viajes__embarcados.sql
+      buscar: "else cast(e.fecha_entrega as date) <= cast(v.fecha_compromiso as date)"
+      reemplazar: "else e.fecha_entrega <= v.fecha_compromiso"
+    debe_detectar:
+      tests: [r5_a_tiempo_por_fecha_no_por_hora, ut_r5_a_tiempo_compara_fechas]
+    estado_esperado:
+      cumplimiento_entrega: NOT_CERTIFIED
+
+  - id: CH-06
+    nombre: entrega_atrasada
+    tipo: reloj
+    reglas: []
+    rompe: Pasan tres días sin que llegue una entrega nueva de la réplica.
+    mecanismo: >
+      Frescura. Nada falla en el pipeline: los datos son correctos pero viejos. Solo una señal
+      de frescura contra un SLA lo hace visible.
+    inyeccion:
+      as_of_offset_horas: 72
+    debe_detectar:
+      checks: [OBS-01]
+    estado_esperado:
+      embarques_mensual: DEGRADED
+      cumplimiento_entrega: DEGRADED
+
+  - id: CH-07
+    nombre: entrega_reenviada
+    tipo: datos
+    reglas: []
+    rompe: La réplica reenvía una entrega completa con otro nombre de carpeta.
+    mecanismo: >
+      Duplicado de entrega. Si la ingesta cargara el contenido otra vez, todas las versiones se
+      duplicarían en landing. El estándar debe absorberlo: mismo hash, se registra y no se carga.
+    inyeccion:
+      accion: copiar_entrega
+      origen: carga_1
+      destino: carga_chaos_reenvio
+    debe_detectar:
+      registro: {entrega: carga_chaos_reenvio, estado: duplicada}
+    estado_esperado:
+      embarques_mensual: CERTIFIED
+      cumplimiento_entrega: CERTIFIED
+
+  - id: CH-08
+    nombre: desempate_cdc_por_timestamp
+    tipo: codigo
+    reglas: [R4]
+    rompe: El orden de versiones CDC usa _ab_cdc_updated_at en lugar del LSN.
+    mecanismo: >
+      Orden CDC equivocado. Las correcciones de costo llegan con el mismo timestamp que la
+      versión original; solo el LSN dice cuál es la última. Los tests de datos no lo ven porque
+      recalculan desde el mismo staging: solo el unit test con el caso controlado lo atrapa.
+    inyeccion:
+      archivo: macros/cdc.sql
+      buscar: |
+            {{ dbt.safe_cast('_ab_cdc_lsn', dbt.type_numeric()) }} desc nulls last,
+            {{ dbt.safe_cast('_ab_cdc_updated_at', dbt.type_timestamp()) }} desc nulls last,
+      reemplazar: |
+            {{ dbt.safe_cast('_ab_cdc_updated_at', dbt.type_timestamp()) }} desc nulls last,
+    debe_detectar:
+      tests: [ut_cdc_ultima_version]
+    estado_esperado:
+      embarques_mensual: NOT_CERTIFIED
+
+  - id: CH-09
+    nombre: estatus_nuevo_en_el_origen
+    tipo: datos
+    reglas: [R2]
+    rompe: El origen empieza a mandar un estatus con texto libre ("En Transito").
+    mecanismo: >
+      Normalización incompleta. Un valor que no está en el catálogo dejaría de contar como
+      embarcado sin avisar. Es un problema de los datos, no del código: la versión sigue siendo
+      válida y el producto queda degradado hasta que el origen se corrija o se acuerde el mapeo.
+    inyeccion:
+      accion: entrega_derivada
+      origen: carga_1
+      archivo: fle_viaje.csv
+      destino: carga_chaos_estatus
+      filtro: {columna: Estatus, igual: TRA}
+      max_filas: 5
+      cambios: {Estatus: En Transito}
+      incremento_lsn: 1000000000
+    debe_detectar:
+      tests: [accepted_values_stg_fle__viajes_estatus]
+    estado_esperado:
+      embarques_mensual: DEGRADED
+      cumplimiento_entrega: DEGRADED
+
+  - id: CH-10
+    nombre: fecha_de_cierre_antes_que_la_real
+    tipo: codigo
+    reglas: [R1]
+    rompe: La fecha de embarque prioriza la fecha de cierre del documento sobre la salida real.
+    mecanismo: >
+      Regla de fecha invertida. El cierre suele capturarse al día siguiente (incluso en lote a
+      las 08:00); usarlo primero mueve embarques de fin de mes al mes siguiente.
+    inyeccion:
+      archivo: models/silver/int_viajes__embarcados.sql
+      buscar: "'coalesce(v.fecha_real_embarque, v.fecha_embarque_final)',"
+      reemplazar: "'coalesce(v.fecha_embarque_final, v.fecha_real_embarque)',"
+    debe_detectar:
+      tests: [r1_fecha_embarque_real_o_cierre, r1_fecha_embarque_de_partidas, ut_r1_fecha_embarque]
+    estado_esperado:
+      embarques_mensual: NOT_CERTIFIED
+      cumplimiento_entrega: NOT_CERTIFIED

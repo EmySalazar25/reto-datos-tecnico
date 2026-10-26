@@ -37,3 +37,6 @@ service-account*.json
 .DS_Store
 .idea/
 .vscode/
+
+# Entregas generadas por `dp chaos inject` (nunca se commitean)
+data/replica/carga_chaos_*/
