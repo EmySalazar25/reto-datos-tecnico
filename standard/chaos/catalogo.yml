@@ -219,3 +219,26 @@ escenarios:
     estado_esperado:
       embarques_mensual: NOT_CERTIFIED
       cumplimiento_entrega: NOT_CERTIFIED
+
+  - id: CH-11
+    nombre: viaje_embarcado_sin_costo
+    tipo: datos
+    reglas: [R4]
+    rompe: Viajes programados pasan a en tránsito sin que nadie capture su costo de flete.
+    mecanismo: >
+      Dato faltante en el origen. La suma del costo ignoraría los nulos y el costo por tonelada
+      saldría más bajo sin error. Es un problema de los datos, no del código: el producto queda
+      degradado y el mart publicado conserva su última versión válida (dbt no lo reemplaza).
+    inyeccion:
+      accion: entrega_derivada
+      origen: carga_1
+      archivo: fle_viaje.csv
+      destino: carga_chaos_sin_costo
+      filtro: {columna: Estatus, igual: PRO}
+      max_filas: 5
+      cambios: {Estatus: TRA, FechaRealEmbarque: "2026-06-29 10:00:00", CostoFlete: ""}
+      incremento_lsn: 1000000000
+    debe_detectar:
+      tests: [not_null_fct_viajes_costo_flete_mxn]
+    estado_esperado:
+      embarques_mensual: DEGRADED

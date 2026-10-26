@@ -71,7 +71,11 @@ def aggregate(checks: list) -> tuple:
         return [c.id for c in sorted(bad, key=lambda c: (c.status != "FAIL", c.id))]
 
     design_bad = ordered("design")
-    if design_bad:
+    design_failed = any(c.phase == "design" and c.status == "FAIL" for c in checks)
+    runtime_failed = any(c.phase == "runtime" and c.status == "FAIL" for c in checks)
+    # Un check de diseño sin evidencia porque dbt omitió nodos tras una falla de los DATOS es
+    # consecuencia, no causa: la versión no está demostrada rota y el producto queda DEGRADED.
+    if design_failed or (design_bad and not runtime_failed):
         return "NOT_CERTIFIED", health, design_bad
     if health in ("FAILED", "STALE", "UNKNOWN"):
         return "DEGRADED", health, ordered("runtime")

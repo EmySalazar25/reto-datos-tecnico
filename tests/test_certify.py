@@ -241,9 +241,31 @@ def test_romper_contrato_requiere_aprobacion(tmp_path):
         ([("OBS-03", "runtime", "WARN")], ("CERTIFIED_WITH_WARNINGS", "AT_RISK")),
         ([("OBS-02", "runtime", "UNKNOWN")], ("DEGRADED", "UNKNOWN")),
         ([("TST-08", "design", "NOT_APPLICABLE"), ("OBS-01", "runtime", "PASS")], ("CERTIFIED", "HEALTHY")),
+        # Nodos omitidos por una falla de datos: la versión no está demostrada rota.
+        ([("TST-06", "design", "UNKNOWN"), ("TST-01", "runtime", "FAIL")], ("DEGRADED", "FAILED")),
+        # Sin falla de datos que lo explique, la falta de evidencia de diseño no certifica.
+        ([("TST-06", "design", "UNKNOWN"), ("TST-01", "runtime", "PASS")], ("NOT_CERTIFIED", "HEALTHY")),
     ],
 )
 def test_precedencia_de_estados(checks, expected):
     results = [CheckResult(id=i, dimension="x", title="x", phase=ph, status=st, summary="") for i, ph, st in checks]
     status, health, _ = engine.aggregate(results)
     assert (status, health) == expected
+
+
+def test_fuente_sin_entrega_reciente_es_advertencia_y_replica_detenida_es_stale(tmp_path):
+    """En CDC una tabla sin cambios puede no venir en la entrega: no es una falla del producto."""
+    m = base_manifest()
+    src2 = "source.estandar.landing_mto.turnos"
+    m["sources"][src2] = {**m["sources"][SRC], "unique_id": src2, "name": "turnos"}
+    m["parent_map"][STG] = [SRC, src2]
+    registry = REGISTRY + [{**REGISTRY[0], "archivo": "turnos.csv", "tabla_destino": "landing_mto.turnos",
+                            "max_extraido_en": "2026-06-28T08:00:00.000Z"}]
+    ev = write_evidence(tmp_path, m, run_results(m))
+    (ev / "entregas.json").write_text(json.dumps(registry))
+    out = engine.certify(ev, POLICY, generated_at="2026-07-01T10:00:00Z")
+    (prod,) = out["products"]
+    obs1 = next(c for c in prod["checks"] if c["id"] == "OBS-01")
+    assert obs1["status"] == "WARN" and prod["status"] == "CERTIFIED_WITH_WARNINGS"
+    stale = engine.certify(ev, POLICY, as_of="2026-07-04T09:00:00Z", generated_at="2026-07-04T10:00:00Z")["products"][0]
+    assert stale["health"] == "STALE" and stale["status"] == "DEGRADED"

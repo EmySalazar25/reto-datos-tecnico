@@ -371,32 +371,40 @@ def _period_hours(spec: dict | None) -> float | None:
     return spec["count"] * mult
 
 
-@check("OBS-01", "observability", "Frescura de las fuentes", "runtime", "Una fuente no ha entregado datos recientes: revisa la réplica antes de tocar el modelo.")
+@check("OBS-01", "observability", "Frescura de la réplica", "runtime", "La réplica no ha entregado datos recientes: revisa la sincronización antes de tocar el modelo.")
 def obs_01(ctx, p):
-    worst, ev = "PASS", []
-    for uid in sorted(u for u in p.closure if u.startswith("source.")):
-        src = ctx.graph.sources[uid]
+    """STALE solo si la réplica completa dejó de entregar. En CDC, una tabla sin cambios puede no
+    venir en una entrega: una fuente individual atrasada es una advertencia, no una falla."""
+    sources = sorted(u for u in p.closure if u.startswith("source."))
+    lags, ev, err_limits = {}, [], []
+    for uid in sources:
+        fresh = ctx.graph.sources[uid].get("freshness") or {}
+        warn_h, err_h = _period_hours(fresh.get("warn_after")), _period_hours(fresh.get("error_after"))
+        if err_h is not None:
+            err_limits.append(err_h)
         fqn = _source_fqn(ctx, uid)
-        rows = _loaded(ctx, fqn)
-        extracted = [t for t in (_parse_ts(r.get("max_extraido_en")) for r in rows) if t]
+        extracted = [t for t in (_parse_ts(r.get("max_extraido_en")) for r in _loaded(ctx, fqn)) if t]
         if not extracted:
             ev.append({"tipo": "frescura", "fuente": fqn, "estado": "UNKNOWN", "detalle": "sin entregas cargadas"})
-            worst = "UNKNOWN" if worst == "PASS" else worst
             continue
-        lag = _hours(ctx.as_of - max(extracted))
-        fresh = (src.get("freshness") or {})
-        warn_h, err_h = _period_hours(fresh.get("warn_after")), _period_hours(fresh.get("error_after"))
-        st = "PASS"
-        if err_h is not None and lag > err_h:
-            st = "FAIL"
-        elif warn_h is not None and lag > warn_h:
-            st = "WARN"
-        if st != "PASS":
-            ev.append({"tipo": "frescura", "fuente": fqn, "retraso_horas": lag, "warn_after_h": warn_h, "error_after_h": err_h, "estado": st})
-        order = ["PASS", "WARN", "UNKNOWN", "FAIL"]
-        worst = max(worst, st, key=order.index)
-    n = len([u for u in p.closure if u.startswith("source.")])
-    return worst, ("todas las fuentes dentro de su umbral" if worst == "PASS" else f"{len(ev)} de {n} fuentes fuera de umbral"), ev, None
+        lags[fqn] = (max(extracted), warn_h, err_h)
+    if not lags or ctx.as_of is None:
+        return "UNKNOWN", "sin entregas cargadas para medir la frescura", ev, None
+
+    last_sync = max(t for t, _, _ in lags.values())
+    replica_lag = _hours(ctx.as_of - last_sync)
+    limit = min(err_limits) if err_limits else None
+    if limit is not None and replica_lag > limit:
+        ev.insert(0, {"tipo": "frescura", "replica": "sin entregas", "retraso_horas": replica_lag, "error_after_h": limit})
+        return "FAIL", f"la réplica no entrega desde hace {replica_lag} h (límite {limit} h)", ev, None
+    for fqn, (t, warn_h, err_h) in sorted(lags.items()):
+        lag = _hours(ctx.as_of - t)
+        threshold = warn_h if warn_h is not None else err_h
+        if threshold is not None and lag > threshold:
+            ev.append({"tipo": "frescura", "fuente": fqn, "retraso_horas": lag, "detalle": "sin entregas recientes (puede no tener cambios)"})
+    if ev:
+        return "WARN", f"réplica al día; {len(ev)} fuente(s) sin entregas recientes", ev, None
+    return "PASS", f"réplica al día (última entrega {replica_lag} h antes de as_of)", [], None
 
 
 @check("OBS-02", "observability", "El producto refleja la última entrega", "runtime", "Hay entregas ingeridas que el producto no refleja: corre `dp build`.")
