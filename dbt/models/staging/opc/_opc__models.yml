@@ -1,0 +1,25 @@
+version: 2
+
+models:
+  - name: stg_opc__plantas
+    description: Catálogo de plantas, estado actual.
+    columns:
+      - name: cla_planta
+        description: Identificador de la planta.
+        data_tests:
+          - not_null
+          - unique:
+              config:
+                tags: [engineering]
+                meta:
+                  verifica: deduplicacion_cdc
+      - name: nom_planta
+        description: Nombre de la planta.
+        data_tests:
+          - not_null
+      - name: cla_pais
+        description: País de la planta (MX, US).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [MX, US]

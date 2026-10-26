@@ -7,3 +7,6 @@ estandar:
       type: duckdb
       path: "{{ env_var('DP_DUCKDB_PATH') }}"
       threads: 4
+      settings:
+        # La sesión en UTC hace que el resultado no dependa de la máquina donde corre.
+        TimeZone: UTC

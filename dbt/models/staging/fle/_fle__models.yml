@@ -1,0 +1,127 @@
+version: 2
+
+models:
+  - name: stg_fle__viajes
+    description: Viajes de embarque, estado actual. Una fila por viaje vigente (sin borrados).
+    data_tests:
+      - excluye_borrados:
+          arguments:
+            source_name: landing_fle
+            table_name: fle_viaje
+            llave_modelo: [id_viaje]
+          config:
+            tags: [engineering]
+    columns:
+      - name: id_viaje
+        description: Identificador del viaje.
+        data_tests:
+          - not_null
+          - unique:
+              config:
+                tags: [engineering]
+                meta:
+                  verifica: deduplicacion_cdc
+      - name: cla_planta
+        description: Planta que embarca.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_opc__plantas')
+                field: cla_planta
+      - name: fecha_compromiso
+        description: Fecha comprometida de entrega (hora local de planta).
+        data_tests:
+          - sin_fecha_centinela:
+              config:
+                tags: [engineering]
+      - name: fecha_real_embarque
+        description: Salida real del camión (hora local). Nula si no se capturó o venía como 1900-01-01.
+        data_tests:
+          - sin_fecha_centinela:
+              config:
+                tags: [engineering]
+      - name: fecha_embarque_final
+        description: Cierre del documento de embarque (hora local).
+        data_tests:
+          - sin_fecha_centinela:
+              config:
+                tags: [engineering]
+      - name: estatus
+        description: Estatus normalizado (mayúsculas, sin espacios).
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [PRO, TRA, ENT, CAN]
+              config:
+                tags: [engineering]
+                meta:
+                  verifica: normalizacion_estatus
+      - name: costo_flete_mxn
+        description: Costo del flete del viaje en MXN. Es un monto por viaje, no por partida.
+
+  - name: stg_fle__partidas
+    description: Partidas de los viajes, estado actual. Una fila por viaje y partida.
+    data_tests:
+      - combinacion_unica:
+          arguments:
+            columnas: [id_viaje, id_partida]
+          config:
+            tags: [engineering]
+            meta:
+              verifica: deduplicacion_cdc
+      - excluye_borrados:
+          arguments:
+            source_name: landing_fle
+            table_name: fle_viaje_det
+            llave_modelo: [id_viaje, id_partida]
+          config:
+            tags: [engineering]
+    columns:
+      - name: id_viaje
+        description: Viaje al que pertenece la partida.
+        data_tests:
+          - not_null
+      - name: id_partida
+        description: Consecutivo de la partida dentro del viaje.
+        data_tests:
+          - not_null
+      - name: cla_cliente
+        description: Cliente destino. Puede no existir en el maestro (se reporta como NO_IDENTIFICADO).
+        data_tests:
+          - not_null
+      - name: cla_articulo
+        description: Artículo embarcado.
+      - name: peso_kg
+        description: Peso documentado de la partida, en kilogramos.
+        data_tests:
+          - not_null
+
+  - name: stg_fle__entregas
+    description: Comprobantes de entrega (POD), estado actual. Una fila por viaje entregado.
+    data_tests:
+      - excluye_borrados:
+          arguments:
+            source_name: landing_fle
+            table_name: fle_entrega
+            llave_modelo: [id_viaje]
+          config:
+            tags: [engineering]
+    columns:
+      - name: id_viaje
+        description: Viaje entregado.
+        data_tests:
+          - not_null
+          - unique:
+              config:
+                tags: [engineering]
+                meta:
+                  verifica: deduplicacion_cdc
+      - name: fecha_entrega
+        description: Fecha y hora de entrega firmada por el cliente (hora local).
+        data_tests:
+          - not_null
+          - sin_fecha_centinela:
+              config:
+                tags: [engineering]

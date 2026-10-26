@@ -1,0 +1,51 @@
+version: 2
+
+models:
+  - name: stg_vta__clientes
+    description: Maestro de clientes, estado actual (sin borrados).
+    data_tests:
+      - excluye_borrados:
+          arguments:
+            source_name: landing_vta
+            table_name: vta_cliente
+            llave_modelo: [cla_cliente]
+          config:
+            tags: [engineering]
+    columns:
+      - name: cla_cliente
+        description: Identificador del cliente.
+        data_tests:
+          - not_null
+          - unique:
+              config:
+                tags: [engineering]
+                meta:
+                  verifica: deduplicacion_cdc
+      - name: segmento
+        description: Segmento actual normalizado. Para hechos históricos usar la dimensión con vigencia.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [DISTRIBUIDOR, CONSTRUCTORA, INDUSTRIAL]
+              config:
+                tags: [engineering]
+                meta:
+                  verifica: normalizacion_segmento
+
+  - name: stg_vta__clientes_versiones
+    description: Historia del maestro de clientes. Una fila por cliente y versión CDC, incluidos borrados.
+    data_tests:
+      - combinacion_unica:
+          arguments:
+            columnas: [cla_cliente, _cdc_lsn]
+          config:
+            tags: [engineering]
+    columns:
+      - name: cla_cliente
+        description: Identificador del cliente.
+        data_tests:
+          - not_null
+      - name: segmento
+        description: Segmento de esa versión, normalizado.
+      - name: _cdc_borrado_en
+        description: Momento del borrado en el origen (UTC), si esta versión es un borrado.

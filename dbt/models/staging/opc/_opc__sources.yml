@@ -22,12 +22,24 @@ sources:
         columns:
           - name: ClaPlanta
             description: Identificador de la planta (PK).
+            data_tests:
+              - castea_a:
+                  arguments:
+                    tipo: "integer"
+                  config:
+                    tags: [engineering]
           - name: NomPlanta
             description: Nombre de la planta.
           - name: ClaPais
             description: País (MX, US).
           - name: _ab_cdc_lsn
             description: Log Sequence Number del cambio en SQL Server.
+            data_tests:
+              - castea_a:
+                  arguments:
+                    tipo: "decimal(38,0)"
+                  config:
+                    tags: [engineering]
           - name: _ab_cdc_updated_at
             description: Fecha y hora (UTC) en que se registró el cambio en el origen.
           - name: _ab_cdc_deleted_at
