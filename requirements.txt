@@ -1,0 +1,6 @@
+# Versiones fijadas. dbt-core 1.10 es la última línea que soporta Python 3.9,
+# el mínimo que pide el reto (ver docs/decisiones.md).
+dbt-core==1.10.23
+dbt-duckdb==1.9.6
+duckdb==1.4.5
+pytest==8.4.2

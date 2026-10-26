@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dp"
+version = "0.1.0"
+description = "CLI del estándar de ingeniería de datos: ingesta, construcción, chaos y certificación."
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+dp = "dp.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

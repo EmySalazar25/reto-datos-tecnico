@@ -1,0 +1,25 @@
+name: estandar
+version: "1.0.0"
+config-version: 2
+profile: estandar
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+
+flags:
+  send_anonymous_usage_stats: false
+
+models:
+  estandar:
+    staging:
+      +schema: staging
+      +materialized: view
+    silver:
+      +schema: silver
+      +materialized: table
+    gold:
+      +schema: gold
+      +materialized: table
+    mart:
+      +materialized: table

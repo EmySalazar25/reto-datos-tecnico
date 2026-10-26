@@ -1,0 +1,9 @@
+# La ruta de la base la fija la CLI `dp` (variable DP_DUCKDB_PATH).
+# Producción usaría un target `bigquery` sin credenciales en el repo.
+estandar:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('DP_DUCKDB_PATH') }}"
+      threads: 4

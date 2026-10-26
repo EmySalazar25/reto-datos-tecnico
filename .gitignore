@@ -1,0 +1,39 @@
+# Entornos y caches de Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# DuckDB local (se reconstruye con `make all`)
+*.duckdb
+*.duckdb.wal
+
+# Artifacts de dbt
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/
+logs/
+target/
+
+# Evidencia y certificación generadas (se publican desde CI, no se commitean)
+.certification/
+.evidence/
+
+# Credenciales y configuración personal
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials*.json
+service-account*.json
+.claude/settings.local.json
+
+# Sistema operativo y editores
+.DS_Store
+.idea/
+.vscode/
