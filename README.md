@@ -26,7 +26,7 @@ make setup     # .venv con dependencias fijadas
 make all       # ingesta + dbt build + certificación
 make verify    # corre todo dos veces y compara filas y contenido de cada tabla
 make chaos     # rompe algo a propósito: detección, explicación, corrección y recertificación
-make chaos-suite  # verifica en sandbox que el estándar detecta las 10 fallas conocidas
+make chaos-suite  # verifica en sandbox que el estándar detecta las fallas del catálogo
 make test      # pruebas de las herramientas
 ```
 
@@ -202,7 +202,7 @@ plan de pago.
 | R1 Fecha real o, si falta, la de cierre | `r1_fecha_embarque_*` | `ut_r1_…_en_hora_de_planta` | CH-10 |
 | R2 Solo TRA y ENT | `r2_*` | `ut_r2_…` | CH-09 |
 | R3 Toneladas = peso documentado / 1,000 | `r3_toneladas_se_conservan` | `ut_r3_…` | CH-02, CH-03 |
-| R4 Costo por viaje, una sola vez | `r4_costo_por_viaje_se_cuenta_una_vez` | `ut_r4_…_tres_partidas…` | CH-01, CH-02, CH-08 |
+| R4 Costo por viaje, una sola vez | `r4_costo_por_viaje_se_cuenta_una_vez` | `ut_r4_…_tres_partidas…` | CH-01, CH-02, CH-08, CH-11 |
 | R5 A tiempo por fecha, solo con POD | `r5_a_tiempo_por_fecha_no_por_hora` | `ut_r5_…` (dos) | CH-05 |
 | R6 Segmento del día del embarque | `r6_segmento_vigente_en_fecha_de_embarque` | `ut_r6_…` (dos) | CH-04 |
 | R7 No identificados no se pierden | `r7_no_identificados_no_se_pierden` | `ut_r7_…` | CH-03 |

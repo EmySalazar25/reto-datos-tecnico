@@ -17,7 +17,7 @@ help:
 	@echo "make certify      - certifica los productos publicados"
 	@echo "make verify       - corre todo dos veces y verifica que no cambie nada"
 	@echo "make chaos        - rompe algo a propósito y muestra detección, diagnóstico y recuperación"
-	@echo "make chaos-suite  - verifica en sandbox que el estándar detecta las 10 fallas conocidas"
+	@echo "make chaos-suite  - verifica en sandbox que el estándar detecta las fallas del catálogo"
 	@echo "make test         - pytest de las herramientas"
 	@echo "make clean        - borra la base local y los artifacts generados"
 
