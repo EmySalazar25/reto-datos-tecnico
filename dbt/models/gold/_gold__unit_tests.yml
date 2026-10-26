@@ -52,3 +52,26 @@ unit_tests:
       rows:
         - {id_viaje: 100, id_partida: 1, segmento_cliente: DISTRIBUIDOR, cliente_identificado: true, toneladas: 1.0}
         - {id_viaje: 100, id_partida: 2, segmento_cliente: NO_IDENTIFICADO, cliente_identificado: false, toneladas: 0.5}
+
+  - name: ut_r3_toneladas_son_peso_documentado_entre_mil
+    description: Toneladas = peso documentado / 1,000, sin redondear en el hecho (1,500 kg = 1.5 t; 250.5 kg = 0.2505 t).
+    model: fct_embarques
+    config:
+      tags: [business]
+      meta:
+        rule: R3
+    given:
+      - input: ref('stg_fle__partidas')
+        rows:
+          - {id_viaje: 100, id_partida: 1, cla_cliente: 10, peso_kg: 1500}
+          - {id_viaje: 100, id_partida: 2, cla_cliente: 10, peso_kg: 250.5}
+      - input: ref('int_viajes__embarcados')
+        rows:
+          - {id_viaje: 100, cla_planta: 1, fecha_embarque: "2026-01-13 10:00:00", tiene_pod: false, a_tiempo: null}
+      - input: ref('int_clientes__vigencia_segmento')
+        rows:
+          - {cla_cliente: 10, segmento: DISTRIBUIDOR, vigente_desde: null, vigente_hasta: null}
+    expect:
+      rows:
+        - {id_viaje: 100, id_partida: 1, toneladas: 1.5}
+        - {id_viaje: 100, id_partida: 2, toneladas: 0.2505}
