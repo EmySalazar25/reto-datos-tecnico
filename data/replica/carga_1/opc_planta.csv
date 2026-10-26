@@ -1,0 +1,5 @@
+ClaPlanta,NomPlanta,ClaPais,_ab_cdc_lsn,_ab_cdc_updated_at,_ab_cdc_deleted_at,_airbyte_extracted_at
+1,Planta Monterrey,MX,7000000017,2025-11-20T12:00:00.000Z,,2026-07-01T08:00:00.000Z
+2,Planta Celaya,MX,7000000068,2025-11-20T12:00:00.000Z,,2026-07-01T08:00:00.000Z
+3,Planta Saltillo,MX,7000000119,2025-11-20T12:00:00.000Z,,2026-07-01T08:00:00.000Z
+4,Planta Houston,US,7000000170,2025-11-20T12:00:00.000Z,,2026-07-01T08:00:00.000Z
