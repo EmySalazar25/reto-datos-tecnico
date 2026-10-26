@@ -1,0 +1,49 @@
+version: 2
+
+unit_tests:
+  - name: ut_r4_costo_de_un_viaje_con_tres_partidas_se_cuenta_una_vez
+    description: >
+      El viaje 1 cuesta 900 y lleva 3 partidas de 1,000 kg; el viaje 2 cuesta 300 y lleva una
+      partida de 500 kg. Costo del mes = 1,200 (no 900 × 3 + 300). Costo por tonelada =
+      1,200 / 3.5 = 342.86.
+    model: embarques_mensual
+    config:
+      tags: [business]
+      meta:
+        rule: R4
+    given:
+      - input: ref('fct_viajes')
+        rows:
+          - {id_viaje: 1, cla_planta: 1, anio_mes: "2026-01", costo_flete_mxn: 900.00}
+          - {id_viaje: 2, cla_planta: 1, anio_mes: "2026-01", costo_flete_mxn: 300.00}
+      - input: ref('fct_embarques')
+        rows:
+          - {id_viaje: 1, id_partida: 1, cla_planta: 1, anio_mes: "2026-01", toneladas: 1.0}
+          - {id_viaje: 1, id_partida: 2, cla_planta: 1, anio_mes: "2026-01", toneladas: 1.0}
+          - {id_viaje: 1, id_partida: 3, cla_planta: 1, anio_mes: "2026-01", toneladas: 1.0}
+          - {id_viaje: 2, id_partida: 1, cla_planta: 1, anio_mes: "2026-01", toneladas: 0.5}
+      - input: ref('dim_planta')
+        rows:
+          - {cla_planta: 1, nom_planta: "Planta Uno", cla_pais: MX}
+    expect:
+      rows:
+        - {anio_mes: "2026-01", cla_planta: 1, nom_planta: "Planta Uno", num_viajes: 2, toneladas_embarcadas: 3.500, costo_flete_mxn: 1200.00, costo_flete_por_ton: 342.86}
+
+  - name: ut_r5_porcentaje_a_tiempo_solo_con_pod
+    description: >
+      De 9 toneladas del mes, 5 no tienen POD y no se evalúan. De las 4 entregadas, 1 llegó a
+      tiempo: 25 %.
+    model: cumplimiento_entrega
+    config:
+      tags: [business]
+      meta:
+        rule: R5
+    given:
+      - input: ref('fct_embarques')
+        rows:
+          - {anio_mes: "2026-01", segmento_cliente: DISTRIBUIDOR, toneladas: 1.0, tiene_pod: true, a_tiempo: true}
+          - {anio_mes: "2026-01", segmento_cliente: DISTRIBUIDOR, toneladas: 3.0, tiene_pod: true, a_tiempo: false}
+          - {anio_mes: "2026-01", segmento_cliente: DISTRIBUIDOR, toneladas: 5.0, tiene_pod: false, a_tiempo: null}
+    expect:
+      rows:
+        - {anio_mes: "2026-01", segmento_cliente: DISTRIBUIDOR, toneladas_entregadas: 4.000, toneladas_a_tiempo: 1.000, pct_a_tiempo: 25.00}

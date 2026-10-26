@@ -1,0 +1,105 @@
+version: 2
+
+unit_tests:
+  - name: ut_r1_fecha_embarque_real_o_cierre_en_hora_de_planta
+    description: >
+      Sin fecha real se usa la de cierre. Houston (supuesto S2): el origen captura en hora de
+      Monterrey; 2026-07-31 23:30 en Monterrey es 2026-08-01 00:30 en Houston (horario de verano),
+      así que el embarque cae en agosto.
+    model: int_viajes__embarcados
+    config:
+      tags: [business]
+      meta:
+        rule: R1
+    given:
+      - input: ref('stg_fle__viajes')
+        rows:
+          - {id_viaje: 1, cla_planta: 1, estatus: ENT, fecha_real_embarque: null, fecha_embarque_final: "2026-01-10 08:00:00", fecha_compromiso: "2026-01-12 00:00:00", costo_flete_mxn: 10}
+          - {id_viaje: 2, cla_planta: 1, estatus: ENT, fecha_real_embarque: "2026-01-09 22:30:00", fecha_embarque_final: "2026-01-10 08:00:00", fecha_compromiso: "2026-01-12 00:00:00", costo_flete_mxn: 10}
+          - {id_viaje: 3, cla_planta: 4, estatus: ENT, fecha_real_embarque: "2026-07-31 23:30:00", fecha_embarque_final: "2026-08-01 08:00:00", fecha_compromiso: "2026-08-03 00:00:00", costo_flete_mxn: 10}
+      - input: ref('stg_opc__plantas')
+        rows:
+          - {cla_planta: 1, cla_pais: MX}
+          - {cla_planta: 4, cla_pais: US}
+      - input: ref('stg_fle__entregas')
+        rows:
+          - {id_viaje: 999, fecha_entrega: "2026-01-01 00:00:00"}
+    expect:
+      rows:
+        - {id_viaje: 1, origen_fecha_embarque: CIERRE, fecha_embarque: "2026-01-10 08:00:00"}
+        - {id_viaje: 2, origen_fecha_embarque: REAL, fecha_embarque: "2026-01-09 22:30:00"}
+        - {id_viaje: 3, origen_fecha_embarque: REAL, fecha_embarque: "2026-08-01 00:30:00"}
+
+  - name: ut_r2_solo_viajes_en_transito_o_entregados
+    description: Programados (PRO) y cancelados (CAN) no cuentan como embarcados.
+    model: int_viajes__embarcados
+    config:
+      tags: [business]
+      meta:
+        rule: R2
+    given:
+      - input: ref('stg_fle__viajes')
+        rows:
+          - {id_viaje: 1, cla_planta: 1, estatus: PRO, fecha_embarque_final: "2026-01-10 08:00:00", fecha_compromiso: "2026-01-12 00:00:00"}
+          - {id_viaje: 2, cla_planta: 1, estatus: TRA, fecha_embarque_final: "2026-01-10 08:00:00", fecha_compromiso: "2026-01-12 00:00:00"}
+          - {id_viaje: 3, cla_planta: 1, estatus: ENT, fecha_embarque_final: "2026-01-10 08:00:00", fecha_compromiso: "2026-01-12 00:00:00"}
+          - {id_viaje: 4, cla_planta: 1, estatus: CAN, fecha_embarque_final: "2026-01-10 08:00:00", fecha_compromiso: "2026-01-12 00:00:00"}
+      - input: ref('stg_opc__plantas')
+        rows:
+          - {cla_planta: 1, cla_pais: MX}
+      - input: ref('stg_fle__entregas')
+        rows:
+          - {id_viaje: 999, fecha_entrega: "2026-01-01 00:00:00"}
+    expect:
+      rows:
+        - {id_viaje: 2, estatus: TRA}
+        - {id_viaje: 3, estatus: ENT}
+
+  - name: ut_r5_a_tiempo_compara_fechas_no_horas
+    description: >
+      La fecha compromiso viene a medianoche. Un POD a las 18:00 del mismo día es a tiempo; uno
+      a las 00:30 del día siguiente no. Sin POD, la puntualidad no se evalúa (nula).
+    model: int_viajes__embarcados
+    config:
+      tags: [business]
+      meta:
+        rule: R5
+    given:
+      - input: ref('stg_fle__viajes')
+        rows:
+          - {id_viaje: 1, cla_planta: 1, estatus: ENT, fecha_real_embarque: "2026-01-10 08:00:00", fecha_compromiso: "2026-01-12 00:00:00"}
+          - {id_viaje: 2, cla_planta: 1, estatus: ENT, fecha_real_embarque: "2026-01-10 08:00:00", fecha_compromiso: "2026-01-12 00:00:00"}
+          - {id_viaje: 3, cla_planta: 1, estatus: TRA, fecha_real_embarque: "2026-01-10 08:00:00", fecha_compromiso: "2026-01-12 00:00:00"}
+      - input: ref('stg_opc__plantas')
+        rows:
+          - {cla_planta: 1, cla_pais: MX}
+      - input: ref('stg_fle__entregas')
+        rows:
+          - {id_viaje: 1, fecha_entrega: "2026-01-12 18:00:00"}
+          - {id_viaje: 2, fecha_entrega: "2026-01-13 00:30:00"}
+    expect:
+      rows:
+        - {id_viaje: 1, tiene_pod: true, a_tiempo: true}
+        - {id_viaje: 2, tiene_pod: true, a_tiempo: false}
+        - {id_viaje: 3, tiene_pod: false, a_tiempo: null}
+
+  - name: ut_r6_vigencia_desde_el_dia_local_del_cambio
+    description: >
+      El cambio registrado a las 05:00 UTC del 15 de enero es el 14 de enero a las 23:00 en hora
+      local: la vigencia nueva empieza el 14. Una versión que solo corrige el nombre no abre
+      vigencia nueva.
+    model: int_clientes__vigencia_segmento
+    config:
+      tags: [business]
+      meta:
+        rule: R6
+    given:
+      - input: ref('stg_vta__clientes_versiones')
+        rows:
+          - {cla_cliente: 10, nom_cliente: "Cliente Diez", segmento: DISTRIBUIDOR, _cdc_lsn: 1, _cdc_actualizado_en: "2025-12-01 15:00:00", _cdc_borrado_en: null}
+          - {cla_cliente: 10, nom_cliente: "Cliente Diez", segmento: INDUSTRIAL, _cdc_lsn: 2, _cdc_actualizado_en: "2026-01-15 05:00:00", _cdc_borrado_en: null}
+          - {cla_cliente: 10, nom_cliente: "CLIENTE DIEZ", segmento: INDUSTRIAL, _cdc_lsn: 3, _cdc_actualizado_en: "2026-02-01 15:00:00", _cdc_borrado_en: null}
+    expect:
+      rows:
+        - {cla_cliente: 10, segmento: DISTRIBUIDOR, vigente_desde: null, vigente_hasta: "2026-01-14"}
+        - {cla_cliente: 10, segmento: INDUSTRIAL, vigente_desde: "2026-01-14", vigente_hasta: null}

@@ -1,0 +1,54 @@
+version: 2
+
+unit_tests:
+  - name: ut_r6_partida_toma_el_segmento_vigente_el_dia_del_embarque
+    description: >
+      El cliente 10 pasó de DISTRIBUIDOR a INDUSTRIAL el 14 de enero. El embarque del 13 usa
+      DISTRIBUIDOR aunque hoy sea INDUSTRIAL; el del 14 usa INDUSTRIAL.
+    model: fct_embarques
+    config:
+      tags: [business]
+      meta:
+        rule: R6
+    given:
+      - input: ref('stg_fle__partidas')
+        rows:
+          - {id_viaje: 100, id_partida: 1, cla_cliente: 10, peso_kg: 1000}
+          - {id_viaje: 101, id_partida: 1, cla_cliente: 10, peso_kg: 2000}
+      - input: ref('int_viajes__embarcados')
+        rows:
+          - {id_viaje: 100, cla_planta: 1, fecha_embarque: "2026-01-13 23:00:00", tiene_pod: true, a_tiempo: true}
+          - {id_viaje: 101, cla_planta: 1, fecha_embarque: "2026-01-14 01:00:00", tiene_pod: true, a_tiempo: true}
+      - input: ref('int_clientes__vigencia_segmento')
+        rows:
+          - {cla_cliente: 10, segmento: DISTRIBUIDOR, vigente_desde: null, vigente_hasta: "2026-01-14"}
+          - {cla_cliente: 10, segmento: INDUSTRIAL, vigente_desde: "2026-01-14", vigente_hasta: null}
+    expect:
+      rows:
+        - {id_viaje: 100, id_partida: 1, segmento_cliente: DISTRIBUIDOR}
+        - {id_viaje: 101, id_partida: 1, segmento_cliente: INDUSTRIAL}
+
+  - name: ut_r7_cliente_fuera_del_maestro_es_no_identificado
+    description: >
+      Una partida cuyo cliente no existe en el maestro no se pierde: queda como NO_IDENTIFICADO
+      con sus toneladas completas.
+    model: fct_embarques
+    config:
+      tags: [business]
+      meta:
+        rule: R7
+    given:
+      - input: ref('stg_fle__partidas')
+        rows:
+          - {id_viaje: 100, id_partida: 1, cla_cliente: 10, peso_kg: 1000}
+          - {id_viaje: 100, id_partida: 2, cla_cliente: 9001, peso_kg: 500}
+      - input: ref('int_viajes__embarcados')
+        rows:
+          - {id_viaje: 100, cla_planta: 1, fecha_embarque: "2026-01-13 10:00:00", tiene_pod: true, a_tiempo: true}
+      - input: ref('int_clientes__vigencia_segmento')
+        rows:
+          - {cla_cliente: 10, segmento: DISTRIBUIDOR, vigente_desde: null, vigente_hasta: null}
+    expect:
+      rows:
+        - {id_viaje: 100, id_partida: 1, segmento_cliente: DISTRIBUIDOR, cliente_identificado: true, toneladas: 1.0}
+        - {id_viaje: 100, id_partida: 2, segmento_cliente: NO_IDENTIFICADO, cliente_identificado: false, toneladas: 0.5}
