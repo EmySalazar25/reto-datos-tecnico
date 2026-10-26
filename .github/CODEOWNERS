@@ -1,0 +1,8 @@
+# Cambios al estándar (política, certificación, agente y CI) requieren revisión de quien lo
+# mantiene. En un fork, reemplaza el usuario por el de quien administra el estándar.
+/standard/          @EmySalazar25
+/src/dp/certify/    @EmySalazar25
+/.github/           @EmySalazar25
+/AGENTS.md          @EmySalazar25
+/.agents/           @EmySalazar25
+/opencode.json      @EmySalazar25

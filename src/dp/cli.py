@@ -29,11 +29,13 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     return 1 if rechazadas else 0
 
 
-def run_build(select=None) -> int:
+def run_build(select=None, full_refresh: bool = False) -> int:
     started = evidence.utc_now()
     dbt_args = ["build"]
     if select:
         dbt_args += ["--select", select]
+    if full_refresh:
+        dbt_args.append("--full-refresh")
     code = dbt_runner.run_dbt(dbt_args)
     # La evidencia se guarda aunque el build falle: una falla también es evidencia.
     evidence.snapshot_build(paths.EVIDENCE_DIR, paths.DBT_DIR, paths.DUCKDB_PATH, paths.ROOT, code, started)
@@ -41,7 +43,38 @@ def run_build(select=None) -> int:
 
 
 def cmd_build(args: argparse.Namespace) -> int:
-    return run_build(args.select)
+    if args.full_refresh and not os.environ.get("DP_OPERACION_APROBADA"):
+        # Destructivo: solo corre dentro del job del workflow `destructivo`, después de que un
+        # revisor aprueba en el environment. Fuera de ahí, se propone con `dp propose`.
+        print("build --full-refresh es una operación destructiva: propónla con `dp propose full-refresh --motivo ...`")
+        return 2
+    return run_build(args.select, args.full_refresh)
+
+
+def cmd_certify_gate(args: argparse.Namespace) -> int:
+    """Compuerta de CI: 0 certificado · 3 solo falta aprobación humana (GOV-07) · 1 no certificado."""
+    catalog = CERT_DIR / "catalogo.json"
+    if not catalog.exists():
+        print("gate: no hay certificación")
+        return 1
+    blocked, approval_only = [], []
+    for p in json.loads(catalog.read_text(encoding="utf-8"))["products"]:
+        if p["status"] != "NOT_CERTIFIED":
+            continue
+        (approval_only if set(p["reasons"]) <= {"GOV-07"} else blocked).append(p["product"])
+    requires = bool(approval_only) and not blocked
+    out = os.environ.get("GITHUB_OUTPUT")
+    if out:
+        with open(out, "a", encoding="utf-8") as fh:
+            fh.write(f"requiere_aprobacion={'true' if requires else 'false'}\n")
+    if blocked:
+        print(f"gate: NO CERTIFICADO: {', '.join(blocked)}")
+        return 1
+    if approval_only:
+        print(f"gate: requiere aprobación humana (cambio gobernado GOV-07): {', '.join(approval_only)}")
+        return 3 if args.estricto else 0
+    print("gate: todos los productos certificados (o degradados por operación, no por la versión)")
+    return 0
 
 
 def cmd_verify_idempotency(args: argparse.Namespace) -> int:
@@ -303,6 +336,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_build = sub.add_parser("build", help="dbt build (modelos, tests y contratos) + snapshot de evidencia")
     p_build.add_argument("--select", help="selector de dbt")
+    p_build.add_argument("--full-refresh", action="store_true", help="solo en el workflow destructivo aprobado")
     p_build.set_defaults(func=cmd_build)
 
     p_idem = sub.add_parser("verify-idempotency", help="corre todo dos veces y compara filas y contenido")
@@ -345,6 +379,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_status = cert_sub.add_parser("status", help="resumen compacto (para personas y agente)")
     p_status.add_argument("producto", nargs="?")
     p_status.set_defaults(func=cmd_certify_status)
+
+    p_gate = cert_sub.add_parser("gate", help="compuerta de CI sobre la última certificación")
+    p_gate.add_argument("--estricto", action="store_true", help="falla también si solo falta aprobación")
+    p_gate.set_defaults(func=cmd_certify_gate)
 
     p_explain = cert_sub.add_parser("explain", help="evidencia completa de un check")
     p_explain.add_argument("producto")

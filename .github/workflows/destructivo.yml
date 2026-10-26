@@ -1,0 +1,84 @@
+name: destructivo
+
+# Frontera humana para operaciones destructivas sobre lo publicado. Cualquiera (incluido el
+# agente) puede SOLICITAR la operación; el job que la ejecuta espera la aprobación de un
+# revisor en el environment `produccion-destructiva`. Funciona como un 2FA.
+
+on:
+  workflow_dispatch:
+    inputs:
+      operacion:
+        description: Operación
+        type: choice
+        options: [full-refresh, recrear-producto]
+        required: true
+      producto:
+        description: Producto (solo para recrear-producto)
+        type: string
+        default: todos
+      motivo:
+        description: Por qué es necesaria
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - run: make setup PYTHON=python
+      - name: Estado actual
+        run: |
+          .venv/bin/dp ingest
+          .venv/bin/dp build
+          .venv/bin/dp certify run || true
+      - name: Plan e impacto
+        # Los inputs llegan por variables de entorno, nunca interpolados en el script.
+        env:
+          OPERACION: ${{ inputs.operacion }}
+          PRODUCTO: ${{ inputs.producto }}
+          MOTIVO: ${{ inputs.motivo }}
+        run: |
+          if [ "$OPERACION" = "recrear-producto" ]; then
+            .venv/bin/dp propose "$OPERACION" --producto "$PRODUCTO" --motivo "$MOTIVO" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            .venv/bin/dp propose "$OPERACION" --motivo "$MOTIVO" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi"
+
+  ejecutar:
+    needs: plan
+    runs-on: ubuntu-latest
+    environment: produccion-destructiva
+    env:
+      DP_OPERACION_APROBADA: ${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - run: make setup PYTHON=python
+      - name: Ejecutar la operación aprobada
+        env:
+          OPERACION: ${{ inputs.operacion }}
+          PRODUCTO: ${{ inputs.producto }}
+        run: |
+          .venv/bin/dp ingest
+          if [ "$OPERACION" = "recrear-producto" ]; then
+            .venv/bin/dp build --full-refresh --select "+$PRODUCTO"
+          else
+            .venv/bin/dp build --full-refresh
+          fi
+      - name: Recertificar antes de publicar
+        run: |
+          .venv/bin/dp certify run | tee -a "$GITHUB_STEP_SUMMARY"
+          .venv/bin/dp certify gate --estricto
+      - uses: actions/upload-artifact@v4
+        with:
+          name: publicado-${{ github.sha }}-${{ github.run_id }}
+          path: deacero.duckdb

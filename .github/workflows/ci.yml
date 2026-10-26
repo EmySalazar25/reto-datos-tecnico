@@ -1,0 +1,148 @@
+name: ci
+
+# Cada PR (y cada push a main) se juzga como versión candidata: construye, prueba, verifica
+# idempotencia, corre el chaos y certifica. La certificación decide; no hay lógica de
+# aprobación aquí, solo se ejecutan las herramientas del repo.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  herramientas:
+    name: herramientas (${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.13"]   # el mínimo que pide el reto y el más reciente soportado
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: make setup PYTHON=python
+      - run: make test
+
+  secretos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks (todo el historial)
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz | tar -xz gitleaks
+          ./gitleaks detect --source . --redact --verbose
+
+  certificacion:
+    needs: herramientas
+    runs-on: ubuntu-latest
+    env:
+      DP_ENTORNO: ci
+    outputs:
+      requiere_aprobacion: ${{ steps.gate.outputs.requiere_aprobacion }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - run: make setup PYTHON=python
+
+      - name: Pipeline (la evidencia se guarda aunque falle)
+        run: |
+          .venv/bin/dp ingest
+          .venv/bin/dp build || echo "::warning::dbt build falló; la certificación explica por qué"
+
+      - name: Idempotencia (correr todo dos veces)
+        run: .venv/bin/dp verify-idempotency || echo "::warning::la idempotencia falló"
+
+      - name: Chaos (las fallas conocidas deben detectarse)
+        run: .venv/bin/dp chaos run || echo "::warning::algún escenario de chaos ESCAPÓ"
+
+      - name: Versión base para el control de cambios (GOV-07)
+        env:
+          EVENTO: ${{ github.event_name }}
+          RAMA_BASE: ${{ github.base_ref }}
+          ANTERIOR: ${{ github.event.before }}
+        run: |
+          if [ "$EVENTO" = "pull_request" ]; then BASE="origin/$RAMA_BASE"; else BASE="$ANTERIOR"; fi
+          if git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            git worktree add "$RUNNER_TEMP/base" "$BASE"
+            DP_DUCKDB_PATH="$RUNNER_TEMP/base.duckdb" DBT_PROFILES_DIR="$RUNNER_TEMP/base/dbt" \
+              .venv/bin/dbt parse --project-dir "$RUNNER_TEMP/base/dbt" --target-path "$RUNNER_TEMP/base-target" --quiet
+            mkdir -p .evidence/base
+            cp "$RUNNER_TEMP/base-target/manifest.json" .evidence/base/manifest.json
+            cp "$RUNNER_TEMP/base/standard/policy.yml" .evidence/base/policy.yml
+          else
+            echo "::notice::sin versión base comparable ($BASE); GOV-07 quedará sin evidencia"
+          fi
+
+      - name: Certificación
+        run: |
+          ARGS="--context ci"
+          if [ -f .evidence/base/manifest.json ]; then
+            ARGS="$ARGS --base-manifest .evidence/base/manifest.json --base-policy .evidence/base/policy.yml"
+          fi
+          .venv/bin/dp certify run $ARGS || true
+
+      - name: Compuerta
+        id: gate
+        run: .venv/bin/dp certify gate
+
+      - name: Evidencia y certificación
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: certificacion-${{ github.sha }}
+          include-hidden-files: true
+          path: |
+            .evidence/
+            .certification/
+
+      - name: Tablas publicadas
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: publicado-${{ github.sha }}
+          path: deacero.duckdb
+
+  # Un cambio que debilita el estándar o rompe un contrato (GOV-07) no se bloquea para
+  # siempre: espera a que una persona lo apruebe en el environment. El aprobador queda
+  # registrado como evidencia en la certificación.
+  aprobacion:
+    needs: certificacion
+    if: needs.certificacion.outputs.requiere_aprobacion == 'true'
+    runs-on: ubuntu-latest
+    environment: aprobacion-estandar
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - run: make setup PYTHON=python
+      - uses: actions/download-artifact@v4
+        with:
+          name: certificacion-${{ github.sha }}
+      - name: Registrar la aprobación y recertificar
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APROBADOR=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/approvals" --jq '.[0].user.login // empty' || true)
+          .venv/bin/dp certify run --context ci \
+            --base-manifest .evidence/base/manifest.json --base-policy .evidence/base/policy.yml \
+            --aprobado-por "${APROBADOR:-revisor-del-environment}"
+          .venv/bin/dp certify gate --estricto
