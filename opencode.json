@@ -1,0 +1,49 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "google/gemini-2.5-flash",
+  "small_model": "google/gemini-2.5-flash",
+  "autoupdate": false,
+  "permission": {
+    "edit": {
+      "*": "allow",
+      "standard/policy.yml": "deny",
+      "data/replica/*": "deny",
+      ".github/*": "ask"
+    },
+    "bash": {
+      "*": "ask",
+      "dp *": "allow",
+      "make setup": "allow",
+      "make ingest": "allow",
+      "make build": "allow",
+      "make all": "allow",
+      "make test": "allow",
+      "make certify": "allow",
+      "git status*": "allow",
+      "git diff*": "allow",
+      "git log*": "allow",
+      "git show*": "allow",
+      "git switch -c *": "allow",
+      "git add *": "allow",
+      "git commit *": "allow",
+      "git push -u origin fix/*": "allow",
+      "git push -u origin feature/*": "allow",
+      "gh pr create *": "allow",
+      "gh pr view *": "allow",
+      "gh run view *": "allow",
+      "gh workflow run destructivo.yml *": "allow",
+      "dp chaos inject *": "ask",
+      "dp chaos restore *": "ask",
+      "dbt *": "deny",
+      "duckdb *": "deny",
+      "*--full-refresh*": "deny",
+      "rm *": "deny",
+      "make clean*": "deny",
+      "git push --force*": "deny",
+      "git push -f*": "deny",
+      "git push origin main*": "deny",
+      "git reset --hard*": "deny"
+    },
+    "webfetch": "ask"
+  }
+}

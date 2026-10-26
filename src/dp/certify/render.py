@@ -102,12 +102,17 @@ def agent_status(prod: dict) -> str:
         f"razones: {', '.join(prod['reasons']) or 'ninguna'}",
     ]
     by_id = {c["id"]: c for c in prod["checks"]}
+    unknown = [rid for rid in prod["reasons"] if by_id[rid]["status"] == "UNKNOWN"]
     for rid in prod["reasons"]:
         c = by_id[rid]
+        if c["status"] == "UNKNOWN" and len(unknown) < len(prod["reasons"]):
+            continue  # consecuencias de la falla principal: se resumen abajo
         lines.append(f"{rid} {c['status']} [{c['phase']}] {c['title']}: {c['summary']}")
         for item in c.get("evidence", [])[:3]:
             compact = {k: v for k, v in item.items() if k != "mensaje"}
             lines.append(f"  evidencia: {json.dumps(compact, ensure_ascii=False)}")
+    if unknown and len(unknown) < len(prod["reasons"]):
+        lines.append(f"sin evidencia (consecuencia: nodos omitidos tras la falla): {', '.join(unknown)}")
     if prod["reasons"]:
         lines.append(f"siguiente: dp certify explain {prod['product']['id']} {prod['reasons'][0]}")
     return "\n".join(lines)

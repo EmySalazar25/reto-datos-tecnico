@@ -169,10 +169,109 @@ def cmd_diagnose(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_propose(args: argparse.Namespace) -> int:
+    from dp import propose
+
+    try:
+        p = propose.plan(args.operacion, args.producto, args.motivo, paths.EVIDENCE_DIR, CERT_DIR, paths.DUCKDB_PATH)
+    except ValueError as exc:
+        print(f"propose: {exc}")
+        return 1
+    path = propose.save(p, paths.EVIDENCE_DIR)
+    print(propose.render(p))
+    print(f"propuesta guardada en {path.relative_to(paths.ROOT)}")
+    return 0
+
+
+def cmd_new_source(args: argparse.Namespace) -> int:
+    from dp import scaffold
+
+    try:
+        written = scaffold.new_source(paths.DBT_DIR, paths.DATA_DIR, args.tabla, args.entrega, args.sistema,
+                                     args.llave.split(",") if args.llave else None)
+    except ValueError as exc:
+        print(f"new-source: {exc}")
+        return 1
+    for w in written:
+        print(f"escrito: {w.relative_to(paths.ROOT)}")
+    print("siguiente: confirma la llave con `dp ingest` + `dp profile " + args.tabla + "`, completa los PENDIENTE y corre `dp build`")
+    return 0
+
+
+AGENT_PROMPT = (
+    "Los productos de datos perdieron su certificación después de un cambio en el código. "
+    "Usa la skill diagnosticar-falla: revisa `dp certify status` y `dp diagnose`, explica el mecanismo "
+    "con el formato de la skill y corrige la causa en el código, sin bajar la vara. Después corre "
+    "`dp build` y `dp certify run --context candidate` y confirma que todo vuelve a CERTIFIED. No hagas push."
+)
+
+
+def _certify_quiet(context: str = "run") -> dict:
+    from dp.certify import engine, render
+
+    result = engine.certify(paths.EVIDENCE_DIR, POLICY, context=context)
+    render.write_outputs(result, CERT_DIR)
+    return {p["product"]["id"]: p["status"] for p in result["products"]}
+
+
+def chaos_demo(scenario_id: str) -> int:
+    import shutil
+    import subprocess
+
+    from dp import chaos
+
+    def step(title: str) -> None:
+        print(f"\n=== {title}")
+
+    step("1. Estado inicial")
+    run_build()
+    before = _certify_quiet()
+    print(before)
+
+    step(f"2. Se rompe algo a propósito ({scenario_id})")
+    print(chaos.inject(scenario_id))
+    run_build()
+    broken = _certify_quiet("candidate")
+    print(broken)
+
+    step("3. El estándar lo detecta y lo explica")
+    for prod, st in broken.items():
+        if st != "CERTIFIED":
+            print(render_status(prod))
+    cmd_diagnose(argparse.Namespace(json=False))
+
+    step("4. Corrección")
+    agent = shutil.which("opencode")
+    if agent and os.environ.get("DP_AGENTE", "1") != "0":
+        print(f"el agente diagnostica y corrige (opencode run):\n{AGENT_PROMPT}\n")
+        subprocess.call([agent, "run", AGENT_PROMPT], cwd=paths.ROOT)
+    else:
+        print("opencode no está instalado (o DP_AGENTE=0): se restaura de forma determinista.")
+        print(f"Para verlo con el agente: instala opencode y pídele:\n  {AGENT_PROMPT}")
+        print(chaos.restore(scenario_id))
+
+    step("5. Recertificación")
+    run_build()
+    after = _certify_quiet("candidate")
+    print(after)
+    recovered = all(st == "CERTIFIED" for st in after.values())
+    print(f"\nresultado: {before} → {broken} → {after}")
+    print("RECUPERADO" if recovered else "NO RECUPERADO: revisa `dp certify status`")
+    return 0 if recovered else 1
+
+
+def render_status(product: str) -> str:
+    from dp.certify import render
+
+    return render.agent_status(_load_cert(product))
+
+
 def cmd_chaos(args: argparse.Namespace) -> int:
     from dp import chaos
 
     try:
+        if args.accion == "demo":
+            return chaos_demo(args.escenario_id)
         if args.accion == "run":
             payload = chaos.run_all(ids=args.escenario or None, keep=args.conservar)
             for line in chaos.summary_lines(payload):
@@ -214,6 +313,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_prof.add_argument("--json", action="store_true")
     p_prof.set_defaults(func=cmd_profile)
 
+    p_prop = sub.add_parser("propose", help="propone una operación destructiva con su impacto (no la ejecuta)")
+    p_prop.add_argument("operacion", choices=["full-refresh", "recrear-producto", "cambio-contrato"])
+    p_prop.add_argument("--producto")
+    p_prop.add_argument("--motivo", required=True)
+    p_prop.set_defaults(func=cmd_propose)
+
+    p_new = sub.add_parser("new-source", help="esqueleto estándar (fuente + staging + tests) para una tabla nueva")
+    p_new.add_argument("tabla", help="nombre del CSV sin extensión, p. ej. mto_equipo")
+    p_new.add_argument("--entrega", required=True, help="carpeta de la entrega en data/replica/")
+    p_new.add_argument("--sistema", help="prefijo del sistema (por omisión, el prefijo de la tabla)")
+    p_new.add_argument("--llave", help="llave primaria, separada por comas (por omisión, la primera columna)")
+    p_new.set_defaults(func=cmd_new_source)
+
     p_diag = sub.add_parser("diagnose", help="qué falló en la última corrida, con evidencia y mecanismos conocidos")
     p_diag.add_argument("--json", action="store_true")
     p_diag.set_defaults(func=cmd_diagnose)
@@ -253,6 +365,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_cres = chaos_sub.add_parser("restore", help="revierte un escenario inyectado")
     p_cres.add_argument("escenario_id")
     p_cres.set_defaults(func=cmd_chaos)
+    p_cdemo = chaos_sub.add_parser("demo", help="certificado → falla → detección → corrección → recertificación")
+    p_cdemo.add_argument("escenario_id", nargs="?", default="CH-01")
+    p_cdemo.set_defaults(func=cmd_chaos)
 
     return parser
 
