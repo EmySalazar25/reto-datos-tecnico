@@ -23,6 +23,9 @@ sin la salida de una herramienta que lo demuestre.
 
 ## Herramientas
 
+Invoca la CLI como `.venv/bin/dp` (o `dp` si el entorno virtual está activado). Si `.venv` no
+existe, corre `make setup`. Para leer archivos usa comandos simples (`cat`, `sed -n`, `grep`).
+
 | Comando | Para qué |
 |---|---|
 | `make setup` | Entorno con dependencias fijadas |

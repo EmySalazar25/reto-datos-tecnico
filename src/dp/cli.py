@@ -277,7 +277,10 @@ def chaos_demo(scenario_id: str) -> int:
     agent = shutil.which("opencode")
     if agent and os.environ.get("DP_AGENTE", "1") != "0":
         print(f"el agente diagnostica y corrige (opencode run):\n{AGENT_PROMPT}\n")
-        subprocess.call([agent, "run", AGENT_PROMPT], cwd=paths.ROOT)
+        cmd = [agent, "run"]
+        if os.environ.get("DP_AGENTE_MODELO"):  # p. ej. google/gemini-2.5-flash con tu llave
+            cmd += ["--model", os.environ["DP_AGENTE_MODELO"]]
+        subprocess.call(cmd + [AGENT_PROMPT], cwd=paths.ROOT)
     else:
         print("opencode no está instalado (o DP_AGENTE=0): se restaura de forma determinista.")
         print(f"Para verlo con el agente: instala opencode y pídele:\n  {AGENT_PROMPT}")
