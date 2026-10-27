@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import copy
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
 
-from dp.certify import engine
+from dp.certify import cambios, engine
 from dp.certify.checks import CheckResult
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -190,45 +191,208 @@ def _base_file(tmp: Path, manifest: dict) -> Path:
     return path
 
 
+CODEOWNERS = "/standard/ @duena\n/src/dp/certify/ @duena\n/.github/ @duena\n/opencode.json @duena\n"
+
+
+def _raw_diff(*entries) -> bytes:
+    """Formato de `git diff --raw -z --no-abbrev --no-renames`: (archivo, blob antes, blob después)."""
+    return b"".join(f":100644 100644 {a} {b} M".encode() + b"\0" + path.encode() + b"\0" for path, a, b in entries)
+
+
+def _gov_kwargs(tmp: Path, base: dict, diff: bytes = b"", base_policy: Path = POLICY) -> dict:
+    """Lo que el CI le pasa a la certificación: versión base, CODEOWNERS de la base y archivos cambiados."""
+    tmp.mkdir(parents=True, exist_ok=True)
+    (tmp / "CODEOWNERS").write_text(CODEOWNERS)
+    (tmp / "cambios.diff").write_bytes(diff)
+    return dict(context="ci", ci_extras=True, base_manifest=_base_file(tmp, base), base_policy=base_policy,
+                base_codeowners=tmp / "CODEOWNERS", changed_files=tmp / "cambios.diff")
+
+
+def _gov7(prod: dict) -> dict:
+    return next(c for c in prod["checks"] if c["id"] == "GOV-07")
+
+
+def _lower_severity(manifest: dict, test_id: str = "test.estandar.m1") -> dict:
+    current = copy.deepcopy(manifest)
+    current["nodes"][test_id]["config"]["severity"] = "warn"
+    return current
+
+
 def test_bajar_severidad_de_un_test_requiere_aprobacion(tmp_path):
     base = base_manifest()
-    current = copy.deepcopy(base)
-    current["nodes"]["test.estandar.m1"]["config"]["severity"] = "warn"
-    kwargs = dict(context="ci", ci_extras=True, base_manifest=_base_file(tmp_path, base), base_policy=POLICY)
+    current = _lower_severity(base)
+    kwargs = _gov_kwargs(tmp_path, base)
     prod = certify(tmp_path, manifest=current, **kwargs)
-    gov7 = next(c for c in prod["checks"] if c["id"] == "GOV-07")
-    assert gov7["status"] == "FAIL" and gov7["evidence"][0]["tipo"] == "severidad_rebajada"
-    approved = certify(tmp_path / "ok", manifest=current, approved_by="revisora", **kwargs)
-    assert next(c for c in approved["checks"] if c["id"] == "GOV-07")["status"] == "PASS"
+    assert _gov7(prod)["status"] == "FAIL" and _gov7(prod)["evidence"][0]["tipo"] == "severidad_rebajada"
+    assert prod["status"] == "NOT_CERTIFIED" and prod["reasons"] == ["GOV-07"]
+    huella = prod["evaluation"]["cambios_gobernados"]["huella"]
+    approved = certify(tmp_path / "ok", manifest=current, approval={"huella": huella, "aprobado_por": "revisora"}, **kwargs)
+    assert _gov7(approved)["status"] == "PASS" and "revisora" in _gov7(approved)["summary"]
+    assert approved["status"] != "NOT_CERTIFIED"
 
 
 def test_eliminar_un_test_de_regla_requiere_aprobacion(tmp_path):
     base = base_manifest()
     current = copy.deepcopy(base)
     del current["nodes"]["test.estandar.m1"]
-    prod = certify(tmp_path, manifest=current, context="ci", ci_extras=True,
-                   base_manifest=_base_file(tmp_path, base), base_policy=POLICY)
-    gov7 = next(c for c in prod["checks"] if c["id"] == "GOV-07")
-    assert gov7["status"] == "FAIL" and any(e["tipo"] == "test_eliminado" for e in gov7["evidence"])
+    prod = certify(tmp_path, manifest=current, **_gov_kwargs(tmp_path, base))
+    assert _gov7(prod)["status"] == "FAIL" and any(e["tipo"] == "test_eliminado" for e in _gov7(prod)["evidence"])
 
 
 def test_cambio_de_politica_requiere_aprobacion(tmp_path):
     other_policy = tmp_path / "policy_base.yml"
     other_policy.write_text("version: 0\n")
-    prod = certify(tmp_path, context="ci", ci_extras=True,
-                   base_manifest=_base_file(tmp_path, base_manifest()), base_policy=other_policy)
-    gov7 = next(c for c in prod["checks"] if c["id"] == "GOV-07")
-    assert gov7["status"] == "FAIL" and gov7["evidence"][0]["tipo"] == "politica_modificada"
+    prod = certify(tmp_path, **_gov_kwargs(tmp_path, base_manifest(), base_policy=other_policy))
+    assert _gov7(prod)["status"] == "FAIL" and _gov7(prod)["evidence"][0]["tipo"] == "politica_modificada"
 
 
 def test_romper_contrato_requiere_aprobacion(tmp_path):
     base = base_manifest()
     current = copy.deepcopy(base)
     current["nodes"][PROD]["columns"]["cla_equipo"]["data_type"] = "varchar"
-    prod = certify(tmp_path, manifest=current, context="ci", ci_extras=True,
-                   base_manifest=_base_file(tmp_path, base), base_policy=POLICY)
-    gov7 = next(c for c in prod["checks"] if c["id"] == "GOV-07")
-    assert gov7["status"] == "FAIL" and gov7["evidence"][0]["tipos_cambiados"] == ["cla_equipo"]
+    prod = certify(tmp_path, manifest=current, **_gov_kwargs(tmp_path, base))
+    change = _gov7(prod)["evidence"][0]
+    assert _gov7(prod)["status"] == "FAIL" and change["tipos_cambiados"] == ["cla_equipo"]
+    assert change["tipos"] == {"cla_equipo": ["integer", "varchar"]}
+
+
+def test_aprobacion_de_otro_cambio_no_vale(tmp_path):
+    """Aprobado bajar la severidad de M1; después también se baja la del grano: la aprobación ya no aplica."""
+    base = base_manifest()
+    first = _lower_severity(base)
+    kwargs = _gov_kwargs(tmp_path, base)
+    huella = certify(tmp_path / "a", manifest=first, **kwargs)["evaluation"]["cambios_gobernados"]["huella"]
+    second = _lower_severity(first, "test.estandar.grano")
+    prod = certify(tmp_path / "b", manifest=second, approval={"huella": huella, "aprobado_por": "revisora"}, **kwargs)
+    assert _gov7(prod)["status"] == "FAIL" and "otro cambio" in _gov7(prod)["summary"]
+    assert prod["status"] == "NOT_CERTIFIED"
+
+
+def test_aprobacion_sin_huella_no_vale(tmp_path):
+    base = base_manifest()
+    prod = certify(tmp_path, manifest=_lower_severity(base), approval={"aprobado_por": "revisora"},
+                   **_gov_kwargs(tmp_path, base))
+    assert _gov7(prod)["status"] == "FAIL"
+
+
+def test_cambio_de_tipo_distinto_tiene_otra_huella(tmp_path):
+    base = base_manifest()
+    huellas = []
+    for i, new_type in enumerate(["varchar", "double"]):
+        current = copy.deepcopy(base)
+        current["nodes"][PROD]["columns"]["cla_equipo"]["data_type"] = new_type
+        prod = certify(tmp_path / str(i), manifest=current, **_gov_kwargs(tmp_path / str(i), base))
+        huellas.append(prod["evaluation"]["cambios_gobernados"]["huella"])
+    assert huellas[0] != huellas[1]
+
+
+def test_la_huella_no_depende_de_la_base_ni_del_orden(tmp_path):
+    """El PR (base = main al abrirlo) y el merge (base = main anterior) del mismo cambio dan la misma huella."""
+    base_a = base_manifest()
+    base_b = copy.deepcopy(base_a)
+    base_b["nodes"] = dict(reversed(list(base_b["nodes"].items())))
+    base_b["nodes"]["model.estandar.otro"] = {"resource_type": "model", "unique_id": "model.estandar.otro", "name": "otro",
+                                              "config": {}, "meta": {}, "raw_code": "select 2"}
+    a = certify(tmp_path / "a", manifest=_lower_severity(base_a), **_gov_kwargs(tmp_path / "a", base_a))
+    b = certify(tmp_path / "b", manifest=_lower_severity(base_b), **_gov_kwargs(tmp_path / "b", base_b))
+    assert a["evaluation"]["cambios_gobernados"]["huella"] == b["evaluation"]["cambios_gobernados"]["huella"]
+
+
+def test_ruta_protegida_de_codeowners_requiere_aprobacion(tmp_path):
+    base = base_manifest()
+    diff = _raw_diff(("src/dp/certify/checks.py", "a" * 40, "b" * 40), ("dbt/models/mart/x.sql", "c" * 40, "d" * 40))
+    prod = certify(tmp_path, manifest=copy.deepcopy(base), **_gov_kwargs(tmp_path, base, diff))
+    gov7 = _gov7(prod)
+    assert gov7["status"] == "FAIL"
+    assert gov7["evidence"] == [{"tipo": "ruta_protegida", "archivo": "src/dp/certify/checks.py",
+                                 "antes": "a" * 40, "despues": "b" * 40}]
+
+
+def test_modificar_una_ruta_protegida_despues_de_aprobar_invalida_la_aprobacion(tmp_path):
+    base = base_manifest()
+    approved_diff = _raw_diff((".github/workflows/ci.yml", "a" * 40, "b" * 40))
+    kwargs = _gov_kwargs(tmp_path / "a", base, approved_diff)
+    huella = certify(tmp_path / "a", manifest=copy.deepcopy(base), **kwargs)["evaluation"]["cambios_gobernados"]["huella"]
+    approval = {"huella": huella, "aprobado_por": "revisora"}
+    same = certify(tmp_path / "a2", manifest=copy.deepcopy(base), approval=approval, **kwargs)
+    assert _gov7(same)["status"] == "PASS"
+    edited = _raw_diff((".github/workflows/ci.yml", "a" * 40, "e" * 40))
+    prod = certify(tmp_path / "b", manifest=copy.deepcopy(base), approval=approval,
+                   **_gov_kwargs(tmp_path / "b", base, edited))
+    assert _gov7(prod)["status"] == "FAIL" and "otro cambio" in _gov7(prod)["summary"]
+
+
+def test_sin_lista_de_archivos_cambiados_gov07_queda_sin_evidencia(tmp_path):
+    base = base_manifest()
+    kwargs = _gov_kwargs(tmp_path, base)
+    del kwargs["changed_files"]
+    prod = certify(tmp_path, manifest=_lower_severity(base), **kwargs)
+    assert _gov7(prod)["status"] == "UNKNOWN" and prod["status"] == "NOT_CERTIFIED"
+
+
+def test_aprobacion_no_tapa_otras_fallas(tmp_path):
+    base = base_manifest()
+    current = _lower_severity(base)
+    current["groups"]["group.estandar.mantenimiento"]["owner"] = {}
+    kwargs = _gov_kwargs(tmp_path, base)
+    huella = certify(tmp_path / "a", manifest=current, **kwargs)["evaluation"]["cambios_gobernados"]["huella"]
+    prod = certify(tmp_path / "b", manifest=current, approval={"huella": huella, "aprobado_por": "revisora"}, **kwargs)
+    assert _gov7(prod)["status"] == "PASS" and prod["status"] == "NOT_CERTIFIED" and "GOV-01" in prod["reasons"]
+
+
+@pytest.mark.parametrize(
+    "path, protected",
+    [
+        ("standard/policy.yml", True),
+        ("standard/chaos/catalogo.yml", True),
+        ("src/dp/certify/checks.py", True),
+        (".github/workflows/ci.yml", True),
+        (".github/CODEOWNERS", True),
+        ("opencode.json", True),
+        ("AGENTS.md", True),
+        (".agents/skills/diagnosticar-falla/SKILL.md", True),
+        ("src/dp/cli.py", False),
+        ("dbt/models/mart/logistica/embarques_mensual.sql", False),
+        ("docs/opencode.json", False),
+    ],
+)
+def test_rutas_protegidas_del_codeowners_del_repo(path, protected):
+    patterns = cambios.codeowners_patterns((ROOT / ".github" / "CODEOWNERS").read_text(encoding="utf-8"))
+    assert cambios.is_protected(path, patterns) is protected
+
+
+def test_lee_el_diff_real_de_git(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args):
+        return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True).stdout
+
+    git("init", "-q")
+    git("config", "user.email", "prueba@example.invalid")
+    git("config", "user.name", "prueba")
+    (repo / "opencode.json").write_text("{}\n")
+    (repo / "con espacio.txt").write_text("a\n")
+    git("add", ".")
+    git("commit", "-qm", "base")
+    (repo / "opencode.json").write_text('{"x": 1}\n')
+    (repo / "con espacio.txt").unlink()
+    (repo / "nuevo.sql").write_text("select 1\n")
+    git("add", "-A")
+    git("commit", "-qm", "cambio")
+    entries = cambios.parse_raw_diff(git("diff", "--raw", "-z", "--no-abbrev", "--no-renames", "HEAD~1", "HEAD"))
+    by_path = {e["archivo"]: e for e in entries}
+    assert set(by_path) == {"opencode.json", "con espacio.txt", "nuevo.sql"}
+    assert by_path["con espacio.txt"]["estado"] == "D" and set(by_path["con espacio.txt"]["despues"]) == {"0"}
+    assert by_path["nuevo.sql"]["estado"] == "A" and set(by_path["nuevo.sql"]["antes"]) == {"0"}
+    assert len(by_path["opencode.json"]["antes"]) == 40 and by_path["opencode.json"]["antes"] != by_path["opencode.json"]["despues"]
+
+
+def test_la_cli_ya_no_acepta_un_aprobador_como_texto():
+    from dp.cli import build_parser
+
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["certify", "run", "--aprobado-por", "alguien"])
 
 
 @pytest.mark.parametrize(

@@ -41,6 +41,30 @@ def _counts_line(prod: dict) -> str:
     return " · ".join(parts)
 
 
+def _governed_section(cg: dict | None) -> list:
+    """Lo que una persona aprueba en el environment: la lista exacta de cambios y su huella."""
+    if not cg or not cg["cambios"]:
+        return []
+    a = cg.get("aprobacion") or {}
+    if not a:
+        estado = "**pendiente**"
+    elif a.get("huella") == cg["huella"] and a.get("aprobado_por"):
+        estado = f"aprobada por **{a['aprobado_por']}**" + (f" en el PR #{a['pr']}" if a.get("pr") else "")
+    else:
+        estado = f"**no corresponde** (la aprobación es de la huella `{a.get('huella')}`)"
+    lines = [
+        "",
+        "### Cambios gobernados (GOV-07)",
+        "",
+        f"Huella `{cg['huella']}` · aprobación: {estado}",
+        "",
+        "Aprobar es aprobar exactamente esta lista. Si cambia, la huella cambia y la aprobación deja de valer.",
+        "",
+    ]
+    lines += [f"- `{json.dumps(c, ensure_ascii=False)}`" for c in cg["cambios"]]
+    return lines
+
+
 def markdown_summary(result: dict) -> str:
     ev = result["evaluation"]
     lines = [
@@ -69,6 +93,7 @@ def markdown_summary(result: dict) -> str:
             f"{ICON[d['governance']['status']]} {d['governance']['status']} | "
             f"{ICON[d['performance']['status']]} {d['performance']['status']} | **{p['status']}** |"
         )
+    lines += _governed_section(ev.get("cambios_gobernados"))
     for p in result["products"]:
         lines += ["", f"### `{p['product']['id']}` — {p['status']}", ""]
         lines.append(f"Testing: {_counts_line(p)}  ")

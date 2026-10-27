@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Callable
 
+from dp.certify import cambios
 from dp.certify.graph import FAIL_STATUSES, PASS_STATUSES, Graph, Product
 
 
@@ -27,8 +28,9 @@ class Ctx:
     idempotencia: dict | None = None
     chaos: dict | None = None
     base_graph: Graph | None = None
-    policy_changed: bool | None = None
-    approved_by: str | None = None
+    global_changes: list | None = None  # política y rutas protegidas; None = sin lista de archivos cambiados
+    fingerprint: str | None = None  # huella de todos los cambios gobernados de la versión
+    approval: dict | None = None  # {huella, aprobado_por, ...} registrada por el environment en CI
 
 
 @dataclass
@@ -305,47 +307,33 @@ def gov_06(ctx, p):
     return "PASS", f"{len(sources)} fuentes → producto → {len(exposures)} consumidor(es)", [], None
 
 
-def _contract_columns(node: dict) -> dict:
-    return {c: (v.get("data_type") or "").lower() for c, v in (node.get("columns") or {}).items()}
+def _approval_origin(a: dict) -> str:
+    if a.get("pr"):
+        return f" en el PR #{a['pr']}"
+    if a.get("run_id"):
+        return f" en la corrida {a['run_id']}"
+    return ""
 
 
-@check("GOV-07", "governance", "Cambio controlado", "design", "Cambios que rompen el contrato o debilitan el estándar requieren aprobación humana en el environment.")
+@check("GOV-07", "governance", "Cambio controlado", "design", "Cambios que rompen el contrato, debilitan el estándar o tocan una ruta protegida requieren aprobación humana en el environment, ligada a la huella del cambio.")
 def gov_07(ctx, p):
     if ctx.base_graph is None:
         return "UNKNOWN", "sin versión base para comparar (se evalúa en CI contra la rama destino)", [], None
-    findings = []
-    base_node = ctx.base_graph.nodes.get(p.unique_id)
-    if base_node is not None:
-        before, after = _contract_columns(base_node), _contract_columns(p.node)
-        removed = sorted(set(before) - set(after))
-        retyped = sorted(c for c in before if c in after and before[c] != after[c])
-        if removed or retyped:
-            bumped = (p.meta.get("contract_version") or 0) > ((base_node.get("meta") or {}).get("contract_version") or 0)
-            findings.append({
-                "tipo": "contrato_incompatible", "columnas_eliminadas": removed, "tipos_cambiados": retyped,
-                "contract_version_subio": bumped,
-            })
-        base_rules = {r.get("id") for r in (base_node.get("meta") or {}).get("business_rules") or []}
-        now_rules = {r.get("id") for r in p.meta.get("business_rules") or []}
-        if base_rules - now_rules:
-            findings.append({"tipo": "reglas_eliminadas", "reglas": sorted(base_rules - now_rules)})
-        base_p = next((bp for bp in ctx.base_graph.products() if bp.unique_id == p.unique_id), None)
-        if base_p is not None:
-            now_tests = {t.unique_id: t for t in ctx.graph.tests_for(p)}
-            for t in ctx.base_graph.tests_for(base_p):
-                if t.kind not in ("business", "engineering", "unit") and t.generic_name != "combinacion_unica":
-                    continue
-                if t.unique_id not in now_tests:
-                    findings.append({"tipo": "test_eliminado", "ref": t.unique_id, "regla": t.rule})
-                elif t.severity == "error" and now_tests[t.unique_id].severity == "warn":
-                    findings.append({"tipo": "severidad_rebajada", "ref": t.unique_id, "regla": t.rule})
-    if ctx.policy_changed:
-        findings.append({"tipo": "politica_modificada", "archivo": "standard/policy.yml"})
+    if ctx.global_changes is None:
+        return "UNKNOWN", "sin la lista de archivos cambiados contra la base (rutas protegidas de CODEOWNERS)", [], None
+    findings = cambios.product_changes(ctx.graph, ctx.base_graph, p) + ctx.global_changes
     if not findings:
         return "PASS", "sin cambios incompatibles ni debilitamiento del estándar", [], None
-    if ctx.approved_by:
-        return "PASS", f"cambios gobernados aprobados por {ctx.approved_by}", findings + [{"tipo": "aprobacion", "por": ctx.approved_by}], None
-    return "FAIL", f"{len(findings)} cambio(s) requieren aprobación humana", findings, None
+    huella = ctx.fingerprint
+    a = ctx.approval or {}
+    # La aprobación vale solo para el conjunto exacto de cambios que la persona vio.
+    if a.get("aprobado_por") and a.get("huella") == huella:
+        return ("PASS", f"cambios gobernados aprobados por {a['aprobado_por']}{_approval_origin(a)} · huella {cambios.short(huella)}",
+                findings + [{"tipo": "aprobacion", **a}], None)
+    if a:
+        return ("FAIL", f"la aprobación de {a.get('aprobado_por') or '?'} es de otro cambio "
+                f"(huella aprobada {cambios.short(a.get('huella'))}, actual {cambios.short(huella)})", findings, None)
+    return "FAIL", f"{len(findings)} cambio(s) requieren aprobación humana · huella {cambios.short(huella)}", findings, None
 
 
 # ---------------------------------------------------------------- Observabilidad
