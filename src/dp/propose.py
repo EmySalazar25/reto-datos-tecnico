@@ -121,7 +121,8 @@ def plan(operation: str, product: str | None, reason: str, evidence_dir: Path, c
     work_dir = evidence_dir / "publicado"
     shutil.rmtree(work_dir, ignore_errors=True)
     work_dir.mkdir(parents=True)
-    published_db = work_dir / "publicado.duckdb"
+    # Mismo nombre de archivo: DuckDB toma de él el nombre del catálogo y las vistas lo referencian.
+    published_db = work_dir / db_path.name
     shutil.copy2(db_path, published_db)
     condition = simulate_incident(published_db, incident) if incident else None
     relations = {name: f"{public[name].get('schema')}.{public[name].get('alias') or name}" for name in targets}
