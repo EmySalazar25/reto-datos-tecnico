@@ -17,11 +17,15 @@ aprobación. Funciona como un 2FA: una persona con permiso aprueba en el environ
 
 ## Pasos
 
-1. `dp propose <operación> [--producto <producto>] --motivo "<por qué>"` genera el plan:
-   productos y consumidores afectados, estado actual de su certificación y filas involucradas.
-2. Muestra el plan a la persona y explica el impacto en lenguaje de negocio.
+1. `dp propose <operación> [--producto <producto>] --motivo "<por qué>"` genera una propuesta
+   sellada: estado actual de cada producto (certificación e integridad de lo publicado),
+   clasificación, riesgo, impacto, recomendación del sistema y su SHA256.
+2. Muestra la propuesta a la persona y explícala en lenguaje de negocio. La clasificación y la
+   recomendación **las calcula el sistema**: repítelas tal cual, no las sustituyas por tu
+   opinión. Puedes explicar la razón que da la regla.
 3. Si la persona confirma, envía la solicitud (no ejecuta nada hasta que alguien apruebe):
    `gh workflow run destructivo.yml -f operacion=<operación> -f producto=<producto> -f motivo="<motivo>"`
+   El motivo describe la necesidad; nunca escribas en él qué debería decidirse.
 4. Un cambio de contrato no va por ese workflow: va por PR, subiendo `meta.contract_version`;
    CI lo marca como cambio gobernado (GOV-07) y espera aprobación.
 
