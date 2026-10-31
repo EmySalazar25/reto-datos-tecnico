@@ -73,6 +73,16 @@ def cmd_certify_gate(args: argparse.Namespace) -> int:
     if approval_only:
         print(f"gate: requiere aprobación humana (cambio gobernado GOV-07): {', '.join(approval_only)}")
         return 3 if args.estricto else 0
+    if args.exigir_certificado:
+        from dp.certify import propuesta as gov
+
+        products = json.loads(catalog.read_text(encoding="utf-8"))["products"]
+        if not gov.publishable(products):
+            pending = [f"{p['product']} {p['status']}" for p in products if p["status"] not in gov.CERTIFIED]
+            print(f"gate: no se publica, hay productos que no volvieron a certificar: {', '.join(pending)}")
+            return 1
+        print("gate: todos los productos certificados; se puede publicar")
+        return 0
     print("gate: todos los productos certificados (o degradados por operación, no por la versión)")
     return 0
 
@@ -213,18 +223,82 @@ def cmd_diagnose(args: argparse.Namespace) -> int:
     return 0
 
 
+def _github_append(variable: str, text: str) -> None:
+    target = os.environ.get(variable)
+    if target:
+        with open(target, "a", encoding="utf-8") as fh:
+            fh.write(text)
+
+
 def cmd_propose(args: argparse.Namespace) -> int:
     from dp import propose
 
+    incident = None if args.simular_incidente in (None, "ninguno") else args.simular_incidente
     try:
-        p = propose.plan(args.operacion, args.producto, args.motivo, paths.EVIDENCE_DIR, CERT_DIR, paths.DUCKDB_PATH)
+        p = propose.plan(args.operacion, args.producto, args.motivo, paths.EVIDENCE_DIR, CERT_DIR, paths.DUCKDB_PATH,
+                         incident=incident)
     except ValueError as exc:
         print(f"propose: {exc}")
         return 1
-    path = propose.save(p, paths.EVIDENCE_DIR)
-    print(propose.render(p))
-    print(f"propuesta guardada en {path.relative_to(paths.ROOT)}")
+    out_dir = Path(args.salida) if args.salida else paths.EVIDENCE_DIR / "propuestas" / p["proposal_id"]
+    path = propose.save(p, out_dir)
+    text = propose.render(p)
+    print(text)
+    _github_append("GITHUB_STEP_SUMMARY", text)
+    _github_append("GITHUB_OUTPUT", f"proposal_id={p['proposal_id']}\nsha256={p['sha256']}\n")
+    request = propose.request_command(p)
+    if request and not os.environ.get("GITHUB_RUN_ID"):
+        print(f"Para solicitarla (nada se ejecuta hasta que una persona apruebe):\n  {request}")
+    print(f"propuesta guardada en {path}")
     return 0
+
+
+def _load_proposal(args: argparse.Namespace) -> tuple:
+    p = json.loads(Path(args.propuesta).read_text(encoding="utf-8"))
+    context = {"commit": args.commit, "corrida": args.corrida, "operacion": args.operacion, "producto": args.producto}
+    return p, context
+
+
+def cmd_verify_proposal(args: argparse.Namespace) -> int:
+    from dp.certify import propuesta as gov
+
+    p, context = _load_proposal(args)
+    failures = gov.verify(p, args.sha256, context)
+    for f in failures:
+        print(f"FAIL CLOSED: {f}")
+    if not failures:
+        print(f"propuesta {p['proposal_id']} íntegra: {p['sha256']}")
+    return 1 if failures else 0
+
+
+def cmd_execute_proposal(args: argparse.Namespace) -> int:
+    """Ejecuta solo una propuesta íntegra, aprobada por una persona y con la huella que se revisó."""
+    from dp.certify import propuesta as gov
+
+    p, context = _load_proposal(args)
+    approvals = json.loads(Path(args.aprobaciones).read_text(encoding="utf-8"))
+    failures = gov.authorize(p, args.sha256, context, approvals)
+    record = {"proposal_id": p.get("proposal_id"), "sha256_revisado": args.sha256, "sha256_ejecutado": gov.fingerprint(p),
+              "corrida": args.corrida, "commit": args.commit, "aprobado_por": gov.approver(approvals)}
+    if failures:
+        evidence.write_json(paths.EVIDENCE_DIR / "ejecucion.json", {**record, "resultado": "BLOQUEADA", "fallas": failures})
+        lines = ["## EJECUCIÓN BLOQUEADA (FAIL CLOSED)", ""] + [f"- {f}" for f in failures] + [""]
+        print("\n".join(lines))
+        _github_append("GITHUB_STEP_SUMMARY", "\n".join(lines) + "\n")
+        return 1
+    select, full_refresh = gov.execution(p)
+    lines = ["## EJECUCIÓN DE LA PROPUESTA APROBADA", "",
+             f"- Propuesta `{p['proposal_id']}` íntegra: el SHA256 recalculado coincide con el revisado (`{p['sha256']}`).",
+             f"- Aprobada por **{record['aprobado_por']}** en `{gov.ENVIRONMENT}`.",
+             f"- Se ejecuta lo que dice la propuesta: `dbt build --full-refresh{' --select ' + select if select else ''}`.", ""]
+    print("\n".join(lines))
+    _github_append("GITHUB_STEP_SUMMARY", "\n".join(lines) + "\n")
+    started = evidence.utc_now()
+    code = run_build(select, full_refresh)
+    evidence.write_json(paths.EVIDENCE_DIR / "ejecucion.json",
+                        {**record, "resultado": "EJECUTADA" if code == 0 else "FALLÓ", "seleccion": select,
+                         "full_refresh": full_refresh, "inicio": started, "fin": evidence.utc_now(), "codigo_salida": code})
+    return code
 
 
 def cmd_new_source(args: argparse.Namespace) -> int:
@@ -365,7 +439,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_prop.add_argument("operacion", choices=["full-refresh", "recrear-producto", "cambio-contrato"])
     p_prop.add_argument("--producto")
     p_prop.add_argument("--motivo", required=True)
+    p_prop.add_argument("--simular-incidente", choices=["ninguno", "INC-01"],
+                        help="altera la copia de lo publicado (solo dev o CI) para demostrar la detección")
+    p_prop.add_argument("--salida", help="directorio de la propuesta (por omisión .evidence/propuestas/<id>/)")
     p_prop.set_defaults(func=cmd_propose)
+
+    for name, func, help_text in [
+        ("verify-proposal", cmd_verify_proposal, "verifica que la propuesta sea exactamente la revisada (hash y contexto)"),
+        ("execute-proposal", cmd_execute_proposal, "ejecuta solo una propuesta íntegra y aprobada en el environment"),
+    ]:
+        p_ver = sub.add_parser(name, help=help_text)
+        p_ver.add_argument("propuesta", help="propuesta.json sellada")
+        p_ver.add_argument("--sha256", required=True, help="huella que se mostró a la persona al revisar")
+        p_ver.add_argument("--commit", required=True)
+        p_ver.add_argument("--corrida", required=True)
+        p_ver.add_argument("--operacion", required=True)
+        p_ver.add_argument("--producto", required=True)
+        if name == "execute-proposal":
+            p_ver.add_argument("--aprobaciones", required=True, help="respuesta de la API de aprobaciones de la corrida")
+        p_ver.set_defaults(func=func)
 
     p_new = sub.add_parser("new-source", help="esqueleto estándar (fuente + staging + tests) para una tabla nueva")
     p_new.add_argument("tabla", help="nombre del CSV sin extensión, p. ej. mto_equipo")
@@ -398,6 +490,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_gate = cert_sub.add_parser("gate", help="compuerta de CI sobre la última certificación")
     p_gate.add_argument("--estricto", action="store_true", help="falla también si solo falta aprobación")
+    p_gate.add_argument("--exigir-certificado", action="store_true",
+                        help="antes de publicar tras una operación destructiva: todo debe volver a certificar")
     p_gate.set_defaults(func=cmd_certify_gate)
 
     p_explain = cert_sub.add_parser("explain", help="evidencia completa de un check")
