@@ -240,6 +240,14 @@ def _git_clean(path: Path) -> bool:
     return subprocess.call(["git", "diff", "--quiet", "--", str(path)], cwd=paths.ROOT) == 0
 
 
+def code_target(scenario_id: str) -> Path | None:
+    """Archivo que modifica un escenario de código (para guardar su contenido antes de inyectar)."""
+    s = find(load_catalog(), scenario_id)
+    if s["tipo"] != "codigo":
+        return None
+    return paths.DBT_DIR / (s.get("inyeccion") or {})["archivo"]
+
+
 def inject(scenario_id: str) -> str:
     guard()
     s = find(load_catalog(), scenario_id)

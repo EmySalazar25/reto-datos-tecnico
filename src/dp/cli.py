@@ -357,13 +357,28 @@ def _certify_quiet(context: str = "run") -> dict:
 
 
 def chaos_demo(scenario_id: str) -> int:
+    """Certificado → falla → detección → corrección → recertificación. Nunca deja la falla inyectada."""
     import shutil
     import subprocess
 
-    from dp import chaos
+    from dp import chaos, plataforma
 
     def step(title: str) -> None:
         print(f"\n=== {title}")
+
+    target = chaos.code_target(scenario_id)
+    original = target.read_text(encoding="utf-8") if target else None
+
+    def restore(reason: str) -> None:
+        print(f"{reason}: se restaura de forma determinista.")
+        if target is not None:
+            target.write_text(original, encoding="utf-8")
+            print(f"restaurado {target.relative_to(paths.ROOT)}")
+        else:
+            print(chaos.restore(scenario_id))
+
+    def certified(statuses: dict) -> bool:
+        return all(st == "CERTIFIED" for st in statuses.values())
 
     step("1. Estado inicial")
     run_build()
@@ -372,34 +387,56 @@ def chaos_demo(scenario_id: str) -> int:
 
     step(f"2. Se rompe algo a propósito ({scenario_id})")
     print(chaos.inject(scenario_id))
-    run_build()
-    broken = _certify_quiet("candidate")
-    print(broken)
+    try:
+        run_build()
+        broken = _certify_quiet("candidate")
+        print(broken)
 
-    step("3. El estándar lo detecta y lo explica")
-    for prod, st in broken.items():
-        if st != "CERTIFIED":
-            print(render_status(prod))
-    cmd_diagnose(argparse.Namespace(json=False))
+        step("3. El estándar lo detecta y lo explica")
+        for prod, st in broken.items():
+            if st != "CERTIFIED":
+                print(render_status(prod))
+        cmd_diagnose(argparse.Namespace(json=False))
 
-    step("4. Corrección")
-    agent = shutil.which("opencode")
-    if agent and os.environ.get("DP_AGENTE", "1") != "0":
-        print(f"el agente diagnostica y corrige (opencode run):\n{AGENT_PROMPT}\n")
-        cmd = [agent, "run"]
-        if os.environ.get("DP_AGENTE_MODELO"):  # p. ej. google/gemini-2.5-flash con tu llave
-            cmd += ["--model", os.environ["DP_AGENTE_MODELO"]]
-        subprocess.call(cmd + [AGENT_PROMPT], cwd=paths.ROOT)
-    else:
-        print("opencode no está instalado (o DP_AGENTE=0): se restaura de forma determinista.")
-        print(f"Para verlo con el agente: instala opencode y pídele:\n  {AGENT_PROMPT}")
-        print(chaos.restore(scenario_id))
+        step("4. Corrección")
+        agent = shutil.which("opencode")
+        agent_ran = False
+        if not agent or os.environ.get("DP_AGENTE", "1") == "0":
+            print(f"Para verlo con el agente: instala opencode y pídele:\n  {AGENT_PROMPT}")
+            restore("opencode no está instalado (o DP_AGENTE=0)")
+        else:
+            runnable, why = plataforma.ejecutable_compatible(agent)
+            if not runnable:
+                print(f"no se lanza el agente: {why}")
+                restore("el agente no puede correr en esta plataforma")
+            else:
+                print(f"el agente diagnostica y corrige (opencode run):\n{AGENT_PROMPT}\n")
+                cmd = [agent, "run"]
+                if os.environ.get("DP_AGENTE_MODELO"):  # p. ej. google/gemini-2.5-flash con tu llave
+                    cmd += ["--model", os.environ["DP_AGENTE_MODELO"]]
+                agent_ran = True
+                try:
+                    subprocess.call(cmd + [AGENT_PROMPT], cwd=paths.ROOT)
+                except OSError as exc:
+                    print(f"no se pudo lanzar el agente: {exc}")
 
-    step("5. Recertificación")
-    run_build()
-    after = _certify_quiet("candidate")
+        step("5. Recertificación")
+        run_build()
+        after = _certify_quiet("candidate")
+        if agent_ran and not certified(after):
+            # Cuota agotada, modelo caído, entorno equivocado o una corrección que no basta: la demo se recupera sola.
+            restore("el agente no recuperó la certificación")
+            run_build()
+            after = _certify_quiet("candidate")
+        elif agent_ran and target is not None and target.read_text(encoding="utf-8") != original:
+            rel = target.relative_to(paths.ROOT)
+            print(f"el agente dejó su corrección sin commit en {rel}: revísala con `git diff`; "
+                  f"`git checkout -- {rel}` la descarta.")
+    except BaseException:
+        restore("la demo se interrumpió")
+        raise
     print(after)
-    recovered = all(st == "CERTIFIED" for st in after.values())
+    recovered = certified(after)
     print(f"\nresultado: {before} → {broken} → {after}")
     print("RECUPERADO" if recovered else "NO RECUPERADO: revisa `dp certify status`")
     return 0 if recovered else 1
