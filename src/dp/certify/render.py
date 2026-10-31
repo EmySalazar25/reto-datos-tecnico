@@ -118,8 +118,20 @@ def markdown_summary(result: dict) -> str:
     return "\n".join(lines)
 
 
-def agent_status(prod: dict) -> str:
-    """Salida compacta para un LLM: estado, razones y la evidencia mínima de cada razón."""
+def agent_status(prod: dict, stale: tuple = ((), None)) -> str:
+    """Salida compacta para un LLM: estado, razones y la evidencia mínima de cada razón.
+
+    Si la certificación guardada está desactualizada, no se muestra como estado actual.
+    """
+    reasons, command = stale
+    if reasons:
+        return "\n".join(
+            [f"producto: {prod['product']['id']}",
+             f"estado: DESACTUALIZADA (la última certificación, del {prod['evaluation']['generated_at']}, "
+             f"dijo {prod['status']}; no describe el estado actual)"]
+            + [f"por qué: {r}" for r in reasons]
+            + [f"siguiente: {command}"]
+        )
     lines = [
         f"producto: {prod['product']['id']}",
         f"estado: {prod['status']}",

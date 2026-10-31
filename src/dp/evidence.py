@@ -25,6 +25,8 @@ EVIDENCE_FILES = (
     "idempotencia.json",
     "chaos_resultados.json",
 )
+# Lo que determina el resultado de un build: el código de dbt y las entregas de la réplica.
+BUILD_INPUTS = ("dbt/models", "dbt/macros", "dbt/tests", "dbt/dbt_project.yml", "data/replica")
 
 
 def utc_now() -> str:
@@ -81,8 +83,26 @@ def snapshot_build(evidence_dir: Path, dbt_dir: Path, db_path: Path, root: Path,
     write_json(evidence_dir / "entregas.json", dump_registry(db_path))
     write_json(
         evidence_dir / "build.json",
-        {"comando": "dbt build", "codigo_salida": exit_code, "inicio": started_at, "fin": utc_now(), "commit": git_commit(root)},
+        {"comando": "dbt build", "codigo_salida": exit_code, "inicio": started_at, "fin": utc_now(), "commit": git_commit(root),
+         "entradas": inputs_digest(root)},
     )
+
+
+def inputs_digest(root: Path) -> str:
+    """Huella del código de dbt y de las entregas: si cambia, la última construcción ya no los refleja."""
+    h = hashlib.sha256()
+    for rel in BUILD_INPUTS:
+        base = root / rel
+        if base.is_file():
+            files = [base]
+        elif base.is_dir():
+            files = sorted(p for p in base.rglob("*") if p.is_file())
+        else:
+            files = []
+        for path in files:
+            h.update(path.relative_to(root).as_posix().encode())
+            h.update(hashlib.sha256(path.read_bytes()).hexdigest().encode())
+    return "sha256:" + h.hexdigest()
 
 
 def evidence_digest(evidence_dir: Path) -> str:

@@ -206,6 +206,7 @@ def _catalogo(tmp_path: Path, estados: dict) -> Path:
 
 def test_la_compuerta_exige_certificado_antes_de_publicar(tmp_path, monkeypatch):
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    monkeypatch.setattr(cli, "_staleness", lambda evaluation: ([], "dp certify run"))  # catálogo vigente
     monkeypatch.setattr(cli, "CERT_DIR", _catalogo(tmp_path / "ok", {"a": "CERTIFIED", "b": "CERTIFIED"}))
     assert cli.main(["certify", "gate", "--estricto", "--exigir-certificado"]) == 0
     # DEGRADED pasa la compuerta normal (falla de datos, no de la versión) pero no se publica tras un full-refresh.
