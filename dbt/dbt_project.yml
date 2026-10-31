@@ -35,3 +35,8 @@ vars:
   zona_horaria_por_pais:
     MX: "America/Monterrey"
     US: "America/Chicago"
+  # Supuesto S11: peso plausible de una partida, en kg. No viene en el requerimiento: en carga_1
+  # va de 5,005 a 35,998 kg (p01 5,224; p99 34,856). El rango deja margen y atrapa un peso
+  # capturado en toneladas. Pendiente de confirmar con Logística.
+  peso_kg_min: 1000
+  peso_kg_max: 45000

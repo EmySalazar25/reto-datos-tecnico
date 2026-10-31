@@ -30,6 +30,8 @@ select
         var('zona_horaria_origen'),
         'p.zona_horaria'
     ) }} as fecha_embarque,
+    -- La misma fecha en la zona de origen, donde también se captura el POD: para compararlas.
+    coalesce(v.fecha_real_embarque, v.fecha_embarque_final) as fecha_embarque_origen,
     v.fecha_compromiso,
     v.costo_flete_mxn,
     e.fecha_entrega,

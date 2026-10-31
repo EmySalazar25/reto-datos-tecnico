@@ -41,6 +41,17 @@ models:
           - sin_fecha_centinela:
               config:
                 tags: [engineering]
+          # Invariante: nadie embarcó después de que se extrajo el registro (CH-15). No se aplica
+          # al cierre: el documento de un viaje en tránsito puede cerrarse después de la extracción.
+          - fecha_no_posterior_a:
+              name: fecha_real_embarque_no_posterior_a_extraccion_stg_fle__viajes
+              arguments:
+                columna_referencia: _extraido_en
+                zona_referencia: "{{ var('zona_horaria_origen') }}"
+              config:
+                meta:
+                  rule: R1
+                  verifica: valor_posible
       - name: fecha_embarque_final
         description: Cierre del documento de embarque (hora local).
         data_tests:
@@ -97,6 +108,26 @@ models:
         description: Peso documentado de la partida, en kilogramos.
         data_tests:
           - not_null
+          # Invariante físico: una partida pesa algo.
+          - rango:
+              name: peso_kg_positivo_stg_fle__partidas
+              arguments:
+                minimo: 0
+                minimo_exclusivo: true
+              config:
+                meta:
+                  rule: R3
+                  verifica: valor_posible
+          # Umbral de negocio (supuesto S11): atrapa un peso capturado en toneladas (CH-12).
+          - rango:
+              name: peso_kg_en_rango_stg_fle__partidas
+              arguments:
+                minimo: "{{ var('peso_kg_min') }}"
+                maximo: "{{ var('peso_kg_max') }}"
+              config:
+                meta:
+                  rule: R3
+                  verifica: valor_plausible
 
   - name: stg_fle__entregas
     description: Comprobantes de entrega (POD), estado actual. Una fila por viaje entregado.
