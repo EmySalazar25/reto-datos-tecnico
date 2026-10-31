@@ -236,12 +236,14 @@ escenarios:
       destino: carga_chaos_sin_costo
       filtro: {columna: Estatus, igual: PRO}
       max_filas: 5
-      cambios: {Estatus: TRA, FechaRealEmbarque: "2026-06-29 10:00:00", CostoFlete: ""}
+      # Salida anterior a sus POD (3 al 6 de enero): el escenario prueba solo el costo faltante.
+      cambios: {Estatus: TRA, FechaRealEmbarque: "2026-01-02 10:00:00", CostoFlete: ""}
       incremento_lsn: 1000000000
     debe_detectar:
       tests: [not_null_fct_viajes_costo_flete_mxn]
     estado_esperado:
       embarques_mensual: DEGRADED
+      cumplimiento_entrega: CERTIFIED
 
   # CH-12 a CH-15: valores imposibles. La estructura y las reglas cuadran, pero el valor no puede
   # existir; las pruebas de conservación no lo ven porque recalculan desde el mismo staging.
