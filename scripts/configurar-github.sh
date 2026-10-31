@@ -30,18 +30,21 @@ reviewers_json() {
 REVIEWERS=$(reviewers_json)
 
 crear_environment() {
-  local nombre="$1" descripcion="$2"
+  local nombre="$1" descripcion="$2" ramas="$3"
   echo "- environment '$nombre': $descripcion"
   # prevent_self_review=false: el agente usa la cuenta de quien lo opera, así que GitHub ve a la
   # misma persona como quien dispara la corrida y como revisora; con true nadie podría aprobar.
   # Con un equipo y un agente con identidad propia, debe ser true (quien solicita no aprueba).
   gh api -X PUT "repos/$REPO/environments/$nombre" --input - <<JSON >/dev/null
-{"wait_timer": 0, "prevent_self_review": false, "reviewers": $REVIEWERS, "deployment_branch_policy": null}
+{"wait_timer": 0, "prevent_self_review": false, "reviewers": $REVIEWERS, "deployment_branch_policy": $ramas}
 JSON
 }
 
-crear_environment aprobacion-estandar "cambios que debilitan el estándar o rompen un contrato (GOV-07)"
-crear_environment produccion-destructiva "full-refresh y recreación de tablas publicadas"
+# aprobacion-estandar se usa desde los PRs (cualquier rama). produccion-destructiva solo desde
+# ramas protegidas: una versión modificada del workflow en otra rama no puede usarlo.
+crear_environment aprobacion-estandar "cambios que debilitan el estándar o rompen un contrato (GOV-07)" null
+crear_environment produccion-destructiva "full-refresh y recreación de tablas publicadas" \
+  '{"protected_branches": true, "custom_branch_policies": false}'
 
 # Sin revisión obligatoria de PR por otra persona: con una sola mantenedora nadie podría aprobar.
 # Lo que CODEOWNERS protege lo hace cumplir GOV-07 (rutas protegidas) con la aprobación en el
