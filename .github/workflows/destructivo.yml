@@ -49,7 +49,7 @@ jobs:
             .venv/bin/dp propose "$OPERACION" --producto "$PRODUCTO" --motivo "$MOTIVO" | tee -a "$GITHUB_STEP_SUMMARY"
           else
             .venv/bin/dp propose "$OPERACION" --motivo "$MOTIVO" | tee -a "$GITHUB_STEP_SUMMARY"
-          fi"
+          fi
 
   ejecutar:
     needs: plan

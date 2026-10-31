@@ -97,8 +97,14 @@ def cmd_verify_idempotency(args: argparse.Namespace) -> int:
 
 
 def cmd_certify_run(args: argparse.Namespace) -> int:
-    from dp.certify import engine, render
+    from dp.certify import cambios, engine, render
 
+    approval = None
+    if args.aprobacion:
+        path = Path(args.aprobacion)
+        if not path.exists():
+            raise SystemExit(f"no existe el registro de aprobación {path}")
+        approval = json.loads(path.read_text(encoding="utf-8"))
     result = engine.certify(
         paths.EVIDENCE_DIR,
         POLICY,
@@ -106,7 +112,9 @@ def cmd_certify_run(args: argparse.Namespace) -> int:
         as_of=args.as_of,
         base_manifest=Path(args.base_manifest) if args.base_manifest else None,
         base_policy=Path(args.base_policy) if args.base_policy else None,
-        approved_by=args.aprobado_por,
+        base_codeowners=Path(args.base_codeowners) if args.base_codeowners else None,
+        changed_files=Path(args.cambios_git) if args.cambios_git else None,
+        approval=approval,
     )
     out = Path(args.salida) if args.salida else CERT_DIR
     render.write_outputs(result, out)
@@ -117,6 +125,9 @@ def cmd_certify_run(args: argparse.Namespace) -> int:
             fh.write(summary)
     for p in result["products"]:
         print(f"{p['product']['id']:<24} {p['status']:<24} salud {p['health']:<9} razones: {', '.join(p['reasons']) or '-'}")
+    cg = result["evaluation"].get("cambios_gobernados")
+    if cg and cg["cambios"]:
+        print(f"cambios gobernados: {len(cg['cambios'])} · huella {cambios.short(cg['huella'])}")
     print(f"detalle: {out}/<producto>.json · resumen: {out}/resumen.md")
     return 1 if any(p["status"] == "NOT_CERTIFIED" for p in result["products"]) else 0
 
@@ -375,7 +386,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--as-of", help="instante de evaluación (ISO UTC); por omisión, reloj replay")
     p_run.add_argument("--base-manifest", help="manifest de la versión base (CI) para GOV-07")
     p_run.add_argument("--base-policy", help="policy.yml de la versión base (CI) para GOV-07")
-    p_run.add_argument("--aprobado-por", help="aprobador humano registrado por el environment de CI")
+    p_run.add_argument("--base-codeowners", help="CODEOWNERS de la versión base: rutas protegidas para GOV-07")
+    p_run.add_argument("--cambios-git", help="salida de `git diff --raw -z --no-abbrev --no-renames <base> HEAD`")
+    p_run.add_argument("--aprobacion", help="registro JSON de la aprobación que el CI obtiene de GitHub (huella y aprobador)")
     p_run.add_argument("--salida", help="directorio de salida (por omisión .certification/)")
     p_run.set_defaults(func=cmd_certify_run)
 

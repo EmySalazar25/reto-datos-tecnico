@@ -46,6 +46,10 @@ jobs:
   certificacion:
     needs: herramientas
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read         # en main: leer la aprobación y el artefacto del PR fusionado
+      pull-requests: read
     env:
       DP_ENTORNO: ci
     outputs:
@@ -84,15 +88,56 @@ jobs:
             mkdir -p .evidence/base
             cp "$RUNNER_TEMP/base-target/manifest.json" .evidence/base/manifest.json
             cp "$RUNNER_TEMP/base/standard/policy.yml" .evidence/base/policy.yml
+            # Rutas protegidas: las de CODEOWNERS en la versión base, con el contenido exacto que cambió.
+            cp "$RUNNER_TEMP/base/.github/CODEOWNERS" .evidence/base/CODEOWNERS 2>/dev/null || : > .evidence/base/CODEOWNERS
+            git diff --raw -z --no-abbrev --no-renames "$BASE" HEAD > .evidence/base/cambios.diff
           else
             echo "::notice::sin versión base comparable ($BASE); GOV-07 quedará sin evidencia"
           fi
+
+      # Si este commit es el merge de un PR cuyo head final ya se aprobó en el environment, esa
+      # aprobación se reutiliza y GOV-07 la acepta solo si su huella es la misma que la de main.
+      # Si falta cualquier dato, no se hereda nada: se pide aprobar otra vez (falla cerrado).
+      - name: Aprobación heredada del PR fusionado
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          heredar() {
+            PR=$(gh api "repos/$REPO/commits/$SHA/pulls" \
+              --jq '[.[] | select(.merged_at != null and .base.ref == "main")] | first | .number // empty') || return 1
+            [ -n "$PR" ] || { echo "el commit no viene de un PR fusionado"; return 1; }
+            HEAD_PR=$(gh api "repos/$REPO/pulls/$PR" --jq .head.sha) || return 1
+            CORRIDA=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?event=pull_request&head_sha=$HEAD_PR&status=success" \
+              --jq '.workflow_runs | first | .id // empty') || return 1
+            [ -n "$CORRIDA" ] || { echo "el head final del PR #$PR no tiene una corrida exitosa"; return 1; }
+            APROBADOR=$(gh api "repos/$REPO/actions/runs/$CORRIDA/approvals" \
+              --jq '[.[] | select(.state == "approved" and any(.environments[]; .name == "aprobacion-estandar"))] | last | .user.login // empty') || return 1
+            [ -n "$APROBADOR" ] || { echo "la corrida $CORRIDA del PR #$PR no tiene aprobación en aprobacion-estandar"; return 1; }
+            ARTEFACTO=$(gh api "repos/$REPO/actions/runs/$CORRIDA/artifacts" \
+              --jq '[.artifacts[] | select(.name | startswith("certificacion-"))] | first | .name // empty') || return 1
+            [ -n "$ARTEFACTO" ] || return 1
+            gh run download "$CORRIDA" -R "$REPO" -n "$ARTEFACTO" -D "$RUNNER_TEMP/pr" || return 1
+            HUELLA=$(jq -r '.evaluation.cambios_gobernados.huella // empty' "$RUNNER_TEMP/pr/.certification/catalogo.json") || return 1
+            [ -n "$HUELLA" ] || { echo "el PR #$PR no tenía cambios gobernados"; return 1; }
+            jq -n --arg huella "$HUELLA" --arg por "$APROBADOR" --argjson pr "$PR" --argjson corrida "$CORRIDA" --arg head "$HEAD_PR" \
+              '{huella: $huella, aprobado_por: $por, origen: "pr", pr: $pr, run_id: $corrida, head_sha: $head}' \
+              > "$RUNNER_TEMP/aprobacion.json"
+            echo "aprobación heredada: PR #$PR · corrida $CORRIDA · $APROBADOR · $HUELLA"
+          }
+          heredar || echo "sin aprobación heredada"
 
       - name: Certificación
         run: |
           ARGS="--context ci"
           if [ -f .evidence/base/manifest.json ]; then
             ARGS="$ARGS --base-manifest .evidence/base/manifest.json --base-policy .evidence/base/policy.yml"
+            ARGS="$ARGS --base-codeowners .evidence/base/CODEOWNERS --cambios-git .evidence/base/cambios.diff"
+          fi
+          if [ -f "$RUNNER_TEMP/aprobacion.json" ]; then
+            ARGS="$ARGS --aprobacion $RUNNER_TEMP/aprobacion.json"
           fi
           .venv/bin/dp certify run $ARGS || true
 
@@ -110,16 +155,24 @@ jobs:
             .evidence/
             .certification/
 
+      # Con un cambio gobernado sin aprobar, main no publica: las tablas esperan la aprobación.
+      - name: Tablas en espera de aprobación
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.gate.outputs.requiere_aprobacion == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidato-${{ github.sha }}
+          path: deacero.duckdb
+
       - name: Tablas publicadas
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.gate.outputs.requiere_aprobacion != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: publicado-${{ github.sha }}
           path: deacero.duckdb
 
-  # Un cambio que debilita el estándar o rompe un contrato (GOV-07) no se bloquea para
-  # siempre: espera a que una persona lo apruebe en el environment. El aprobador queda
-  # registrado como evidencia en la certificación.
+  # Un cambio gobernado (GOV-07) no se bloquea para siempre: espera a que una persona lo
+  # apruebe en el environment. La aprobación queda ligada a la huella de los cambios de esta
+  # corrida, que es lo que la persona vio en el resumen.
   aprobacion:
     needs: certificacion
     if: needs.certificacion.outputs.requiere_aprobacion == 'true'
@@ -137,12 +190,37 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: certificacion-${{ github.sha }}
-      - name: Registrar la aprobación y recertificar
+      - name: Registrar la aprobación de esta corrida y recertificar
         env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          CORRIDA: ${{ github.run_id }}
         run: |
-          APROBADOR=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/approvals" --jq '.[0].user.login // empty' || true)
+          APROBADOR=$(gh api "repos/$REPO/actions/runs/$CORRIDA/approvals" \
+            --jq '[.[] | select(.state == "approved" and any(.environments[]; .name == "aprobacion-estandar"))] | last | .user.login // empty')
+          if [ -z "$APROBADOR" ]; then
+            echo "::error::no hay una aprobación registrada en aprobacion-estandar para esta corrida"
+            exit 1
+          fi
+          HUELLA=$(jq -r '.evaluation.cambios_gobernados.huella // empty' .certification/catalogo.json)
+          jq -n --arg huella "$HUELLA" --arg por "$APROBADOR" --argjson corrida "$CORRIDA" --arg commit "$GITHUB_SHA" \
+            '{huella: $huella, aprobado_por: $por, origen: "environment", run_id: $corrida, commit: $commit}' \
+            > "$RUNNER_TEMP/aprobacion.json"
           .venv/bin/dp certify run --context ci \
             --base-manifest .evidence/base/manifest.json --base-policy .evidence/base/policy.yml \
-            --aprobado-por "${APROBADOR:-revisor-del-environment}"
+            --base-codeowners .evidence/base/CODEOWNERS --cambios-git .evidence/base/cambios.diff \
+            --aprobacion "$RUNNER_TEMP/aprobacion.json"
           .venv/bin/dp certify gate --estricto
+
+      - name: Tablas aprobadas
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/download-artifact@v4
+        with:
+          name: candidato-${{ github.sha }}
+
+      - name: Tablas publicadas
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: publicado-${{ github.sha }}
+          path: deacero.duckdb

@@ -57,6 +57,11 @@ DP_AGENTE_MODELO=google/gemini-2.5-flash make chaos   # la demo de chaos con otr
 Los modelos gratuitos de opencode rotan: `opencode models opencode` lista los vigentes y
 cualquiera funciona con `--model`.
 
+**Nunca con `--auto`.** `opencode run --auto` aprueba todo lo que no esté negado explícitamente.
+Las rutas con las que el agente podría aprobarse a sí mismo están negadas y se sostienen incluso
+con `--auto` (ver [Frontera humana](#frontera-humana)), pero cualquier otro comando que debería
+preguntarte quedaría aprobado sin que lo veas.
+
 **Validado en vivo** (opencode 1.19, modelo gratuito, sin llave):
 
 | Prueba | Qué hizo el agente |
@@ -164,7 +169,7 @@ Lo crítico no depende de que el agente se acuerde.
 | **Contexto** ([`AGENTS.md`](AGENTS.md)) | Quién eres y qué reglas sigues: se lee siempre | Las 10 reglas del estándar, el mapa de herramientas y del repo, a qué skill va cada tipo de petición |
 | **Skill** ([`.agents/skills/`](.agents/skills)) | Cómo se hace algo: se carga cuando hace falta | Nueva fuente a mart certificado, ingerir una entrega, perfilar una tabla, diagnosticar una falla, proponer un cambio destructivo |
 | **Herramienta** ([`src/dp/`](src/dp)) | Algo que se ejecuta y produce evidencia | `ingest`, `profile`, `build`, `certify`, `diagnose`, `chaos`, `propose`, `new-source`, `verify-idempotency` |
-| **Validación** | Tiene que pasar siempre, aunque el agente no quiera | Contratos y tests de dbt, unit tests, certificación con política versionada, compuerta de CI, CODEOWNERS, environments con revisor, guardas en la CLI, permisos del agente |
+| **Validación** | Tiene que pasar siempre, aunque el agente no quiera | Contratos y tests de dbt, unit tests, certificación con política versionada, compuerta de CI, rutas protegidas (CODEOWNERS) en GOV-07, environments con revisor, guardas en la CLI, permisos del agente |
 
 ---
 
@@ -178,16 +183,43 @@ necesita aprobación; lo que afecta a quien consume los productos, sí.
 |---|---|
 | Full-refresh, borrar o recrear tablas publicadas | Workflow [`destructivo`](.github/workflows/destructivo.yml): cualquiera lo solicita, el job que ejecuta espera a un revisor en el environment `produccion-destructiva` y recertifica antes de publicar. `dp build --full-refresh` se niega fuera de ese job |
 | Romper el contrato de un mart (quitar o renombrar columnas, cambiar tipo o grano) | GOV-07 compara contra la versión base en CI; sin aprobación en el environment `aprobacion-estandar`, el producto no se certifica |
-| Bajar la vara: severidad `error` → `warn`, borrar un test o una regla, editar la política | GOV-07 + CODEOWNERS sobre `standard/`, el engine, CI y la configuración del agente |
+| Bajar la vara: severidad `error` → `warn`, borrar un test o una regla, editar la política | GOV-07, con la misma aprobación en `aprobacion-estandar` |
+| Cambiar el motor de certificación, el CI, la política o la configuración del agente | GOV-07 lee las rutas protegidas del [`CODEOWNERS`](.github/CODEOWNERS) de la versión base; cada archivo cambiado entra con su contenido exacto |
+
+**La aprobación vale para un cambio exacto, no para una persona.** GOV-07 calcula una
+**huella**: el sha256 de la lista de cambios gobernados con su valor antes y después. Esa lista y
+su huella aparecen en el resumen de la corrida, y es lo que se aprueba. El CI registra la
+aprobación desde la API de GitHub (environment y estado) junto con la huella; el agente no tiene
+forma de producir ese registro.
+
+- En el PR, cada push nuevo es una corrida nueva y vuelve a esperar aprobación.
+- Al fusionar, `main` reutiliza la aprobación del head final del PR si calcula la misma huella:
+  el mismo cambio no se aprueba dos veces.
+- Si el cambio se modificó después de aprobarlo, aparece otro cambio gobernado o falta cualquier
+  dato (PR, corrida, aprobación, artefacto), `main` vuelve a pedir aprobación y no publica hasta
+  tenerla.
 
 **Por qué ahí.** Si la frontera fuera "lo que el agente decide no hacer", no existiría. Por eso
 hay tres barreras y solo la última es la frontera real:
 
 1. **Contexto y skill:** el agente sabe que debe proponer, no ejecutar.
 2. **Permisos del agente** ([`opencode.json`](opencode.json)): niega `dbt`, `duckdb`, `rm`,
-   `--full-refresh`, force push y editar la política o landing. Es una barrera local; cualquiera
-   puede editar el archivo.
-3. **Servidor:** el CI, CODEOWNERS y los environments de GitHub. Esta no depende del agente.
+   `--full-refresh`, force push, editar la política, landing, el CI, el motor o sus propios
+   permisos, y todo `gh` salvo crear o ver PRs y solicitar el workflow destructivo. Niega en
+   particular lo que le permitiría aprobarse con tus credenciales: `gh api`, `gh auth`,
+   `gh pr merge`, el llavero, `--aprobacion` e intérpretes (`python`, `bash -c`, `node`…).
+3. **Servidor:** el CI, GOV-07 y los environments de GitHub. Esta no depende del agente.
+
+**Probado con `opencode run --auto`** (que aprueba todo lo no negado) en un sandbox sin
+credenciales: los intentos de aprobar por API, obtener el token, hacer merge, falsificar la
+aprobación, editar sus permisos o el CI, empujar a `main` o llamar a `gh` desde un intérprete
+fueron negados por regla; crear la rama y ver el PR sí se permitieron.
+
+**Límite con una sola cuenta.** El agente usa la cuenta de quien lo opera y GitHub no los
+distingue, por eso `prevent_self_review` queda en `false`. Los permisos cierran las rutas
+directas, pero un agente que escribe código y lo ejecuta con herramientas permitidas (`make`,
+`dp`, tests) lo hace con esa misma identidad. El cierre de fondo es darle identidad propia
+([ADR 0002](docs/adr/0002-frontera-humana.md)).
 
 **Configuración reproducible en un fork** (los environments y las reglas no se copian):
 
@@ -197,8 +229,9 @@ scripts/configurar-github.sh owner/repo revisor1,revisor2
 ```
 
 Crea los environments `aprobacion-estandar` y `produccion-destructiva` con revisores, y protege
-`main` con los checks requeridos y revisión de CODEOWNERS. Requiere un repositorio público o un
-plan de pago.
+`main` con los checks requeridos. No exige que otra persona apruebe el PR: con una sola
+mantenedora nadie podría hacerlo, y lo que protege CODEOWNERS lo hace cumplir GOV-07. Requiere
+un repositorio público o un plan de pago.
 
 ---
 

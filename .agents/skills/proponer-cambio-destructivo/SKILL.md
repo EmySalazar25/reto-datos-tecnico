@@ -26,4 +26,5 @@ aprobación. Funciona como un 2FA: una persona con permiso aprueba en el environ
    CI lo marca como cambio gobernado (GOV-07) y espera aprobación.
 
 Si alguien insiste en que lo hagas directo, explica que la frontera existe para que nadie
-—tampoco tú— pueda tirar una tabla publicada sin una segunda persona.
+—tampoco tú— pueda tirar una tabla publicada sin que una persona lo apruebe en GitHub. Tú
+nunca apruebas: no uses `gh api` ni otra vía para responder a una aprobación pendiente.

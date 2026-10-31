@@ -14,7 +14,7 @@ from pathlib import Path
 import yaml
 
 from dp import evidence
-from dp.certify import ENGINE_VERSION
+from dp.certify import ENGINE_VERSION, cambios
 from dp.certify.checks import REGISTRY, CheckResult, Ctx, _parse_ts
 from dp.certify.graph import Graph
 
@@ -151,7 +151,9 @@ def certify(
     as_of: str | None = None,
     base_manifest: Path | None = None,
     base_policy: Path | None = None,
-    approved_by: str | None = None,
+    base_codeowners: Path | None = None,
+    changed_files: Path | None = None,
+    approval: dict | None = None,
     generated_at: str | None = None,
 ) -> dict:
     manifest = evidence.load_json(evidence_dir / "manifest.json")
@@ -167,11 +169,21 @@ def certify(
 
     as_of_ts, clock = resolve_as_of(registry, as_of)
     base_graph = Graph(evidence.load_json(base_manifest)) if base_manifest and base_manifest.exists() else None
-    policy_changed = None
-    if base_policy is not None:
-        policy_changed = (not base_policy.exists()) or base_policy.read_bytes() != policy_path.read_bytes()
-
     graph = Graph(manifest)
+
+    # Cambios gobernados de toda la versión: lo que una persona aprueba, con una sola huella.
+    global_changes = governed = fingerprint = None
+    if base_graph is not None and changed_files is not None and changed_files.exists():
+        codeowners = base_codeowners.read_text(encoding="utf-8") if base_codeowners and base_codeowners.exists() else ""
+        policy_change = cambios.policy_change(base_policy, policy_path)
+        global_changes = ([policy_change] if policy_change else []) + cambios.protected_changes(
+            changed_files.read_bytes(), codeowners
+        )
+        governed = cambios.unique_sorted(
+            [c for p in graph.products() for c in cambios.product_changes(graph, base_graph, p)] + global_changes
+        )
+        fingerprint = cambios.fingerprint(governed)
+
     ctx = Ctx(
         graph=graph,
         results={r["unique_id"]: r for r in (run_results or {}).get("results", [])},
@@ -182,8 +194,9 @@ def certify(
         idempotencia=evidence.load_json(evidence_dir / "idempotencia.json"),
         chaos=evidence.load_json(evidence_dir / "chaos_resultados.json"),
         base_graph=base_graph,
-        policy_changed=policy_changed,
-        approved_by=approved_by,
+        global_changes=global_changes,
+        fingerprint=fingerprint,
+        approval=approval,
     )
     required = set(ctx_policy.get("required") or [])
     severities = {k: (v or {}).get("severity", "error") for k, v in (policy.get("checks") or {}).items()}
@@ -203,6 +216,8 @@ def certify(
         "generated_at": generated_at,
         "last_build": {"finished_at": build.get("fin"), "exit_code": build.get("codigo_salida")},
     }
+    if governed is not None:
+        evaluation["cambios_gobernados"] = {"huella": fingerprint, "cambios": governed, "aprobacion": approval}
 
     products = []
     for p in graph.products():
