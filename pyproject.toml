@@ -10,7 +10,7 @@ requires-python = ">=3.9"
 dependencies = []
 
 [project.scripts]
-dp = "dp.cli:main"
+dp = "dp.entrada:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
