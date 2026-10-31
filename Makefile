@@ -26,6 +26,7 @@ setup:
 	$(BIN)/pip install --quiet --upgrade pip
 	$(BIN)/pip install --quiet -r requirements.txt
 	$(BIN)/pip install --quiet -e .
+	$(BIN)/python -m dp.plataforma --escribir-huella
 
 ingest:
 	$(DP) ingest
