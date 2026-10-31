@@ -84,7 +84,7 @@ de leer artifacts completos.
 | 2. Entregas nuevas de la réplica | Copia la carpeta en `data/replica/carga_N/` y corre `make all`. Reenvíos, archivos modificados, tablas no declaradas, columnas faltantes o nuevas, borrados y correcciones con el mismo timestamp tienen un tratamiento definido | skill `ingerir-entrega`, `dp ingest` |
 | 3. Su propio chaos | El agente empieza por `dp certify status` y `dp diagnose`: nodo que falló, regla, filas de muestra, diff del unit test (esperado vs real) y mecanismos conocidos del catálogo. Responde con **mecanismo**, no con el stack trace, y propone el fix como PR | skill `diagnosticar-falla`, [`standard/chaos/catalogo.yml`](standard/chaos/catalogo.yml) |
 | 4. Fuente y requerimiento nuevos | `dp new-source` genera la fuente y el staging estándar desde el CSV; la skill `nueva-fuente-a-mart` guía capas, reglas como tests y certificación. La ficha de certificación es la checklist. Probado con una fuente de otro dominio | [`tests/test_scaffold.py`](tests/test_scaffold.py), [`tests/test_certify.py`](tests/test_certify.py) |
-| 5. Algo destructivo sin aprobación | El agente no tiene cómo: `dp build --full-refresh` se niega fuera del job aprobado, los permisos del agente lo bloquean y la operación solo existe en un workflow que espera a un revisor. El agente usa `dp propose` y pide la aprobación | [Frontera humana](#frontera-humana) |
+| 5. Algo destructivo sin aprobación | El agente no tiene cómo: `dp build --full-refresh` se niega fuera del job aprobado, los permisos del agente lo bloquean y la operación solo existe en un workflow que espera a un revisor. El agente usa `dp propose`: una propuesta sellada con clasificación y recomendación deterministas; lo que se ejecuta es exactamente lo aprobado | [Operaciones destructivas](#operaciones-destructivas-decisión-humana-informada) |
 
 ---
 
@@ -181,7 +181,7 @@ necesita aprobación; lo que afecta a quien consume los productos, sí.
 
 | Requiere aprobación humana | Mecanismo |
 |---|---|
-| Full-refresh, borrar o recrear tablas publicadas | Workflow [`destructivo`](.github/workflows/destructivo.yml): cualquiera lo solicita, el job que ejecuta espera a un revisor en el environment `produccion-destructiva` y recertifica antes de publicar. `dp build --full-refresh` se niega fuera de ese job |
+| Full-refresh, borrar o recrear tablas publicadas | Workflow [`destructivo`](.github/workflows/destructivo.yml): cualquiera lo solicita; el sistema genera una propuesta sellada; el job que ejecuta espera a un revisor en el environment `produccion-destructiva`, verifica la propuesta y recertifica antes de publicar. Ver [Operaciones destructivas](#operaciones-destructivas-decisión-humana-informada) |
 | Romper el contrato de un mart (quitar o renombrar columnas, cambiar tipo o grano) | GOV-07 compara contra la versión base en CI; sin aprobación en el environment `aprobacion-estandar`, el producto no se certifica |
 | Bajar la vara: severidad `error` → `warn`, borrar un test o una regla, editar la política | GOV-07, con la misma aprobación en `aprobacion-estandar` |
 | Cambiar el motor de certificación, el CI, la política o la configuración del agente | GOV-07 lee las rutas protegidas del [`CODEOWNERS`](.github/CODEOWNERS) de la versión base; cada archivo cambiado entra con su contenido exacto |
@@ -198,6 +198,66 @@ forma de producir ese registro.
 - Si el cambio se modificó después de aprobarlo, aparece otro cambio gobernado o falta cualquier
   dato (PR, corrida, aprobación, artefacto), `main` vuelve a pedir aprobación y no publica hasta
   tenerla.
+
+### Operaciones destructivas: decisión humana informada
+
+**El agente propone → el sistema valida y explica → una persona decide → el pipeline ejecuta
+exactamente lo aprobado.** El resumen de la corrida del workflow `destructivo` funciona como la
+pantalla de decisión: estado actual, cambio propuesto, alcance, impacto, recomendación,
+integridad de la propuesta y la decisión requerida.
+
+**Dos dimensiones distintas por producto.** La *certificación de lo publicado* (los tests,
+contratos y reglas corridos sobre lo publicado) y la *integridad de la publicación* (si lo
+publicado coincide con la reconstrucción determinista desde landing: `INTACT` o `DRIFTED`). Un
+producto puede pasar sus tests y aun así estar `DRIFTED`. Aparte va la *clasificación de la
+propuesta* (`SAFE`, `DESTRUCTIVE`, `CRITICAL`) y su riesgo: un producto `CERTIFIED` puede tener
+encima una propuesta `DESTRUCTIVE — HIGH RISK`.
+
+**Recomendación determinista** ([`src/dp/certify/propuesta.py`](src/dp/certify/propuesta.py),
+ruta protegida). Lee solo evidencia, nunca el texto de la solicitud; la primera regla que se
+cumple decide:
+
+| Regla | Condición | Recomendación |
+|---|---|---|
+| R1 | Cambio de contrato (`CRITICAL`) | REJECT: va por PR con GOV-07 |
+| R2 | Sin evidencia de integridad | REJECT |
+| R3 | La reconstrucción desde landing no certifica | REJECT: reconstruir no lo arregla |
+| R4 | Lo publicado está `DRIFTED` y la reconstrucción certifica | APPROVE: el full-refresh restaura el estado reproducible |
+| R5 | Todo `INTACT` y certificado | REJECT: no hay condición que justifique el riesgo |
+
+La recomendación es informativa: el sistema no puede autorizar. Decide la persona en
+`produccion-destructiva`.
+
+**Aprobar A nunca ejecuta B.** La propuesta es un JSON sellado con el sha256 de su contenido
+canónico; su id (`PROP-AAAAMMDD-<8 del hash>`) se deriva del hash. La cadena:
+
+1. `plan` sella la propuesta, la guarda como artefacto y publica el hash como salida del job y en
+   el resumen, antes de la decisión.
+2. GitHub liga la aprobación a esa corrida, fijada a un commit y a unos inputs.
+3. `ejecutar` descarga la propuesta, recalcula el hash y lo compara con el revisado; verifica
+   commit, corrida, operación, producto y que la aprobación sea de `produccion-destructiva`.
+4. Ejecuta la operación leída de la propuesta verificada, no de los inputs. Cualquier diferencia:
+   no ejecuta nada (falla cerrado) y deja el registro en `ejecucion.json`.
+5. Recertifica y publica solo si todos los productos vuelven a certificar.
+
+Si se rechaza, `ejecutar` nunca arranca: el job `registro` (solo lee la API) deja la decisión,
+la propuesta y la ausencia de `publicado-*` como evidencia.
+
+**Demostración reproducible** desde *Actions → destructivo → Run workflow*:
+
+| Escenario | `simular_incidente` | Lo que concluye el sistema |
+|---|---|---|
+| A | `ninguno` | Ambos productos `CERTIFIED` e `INTACT` → `DESTRUCTIVE`, `HIGH`, **REJECT** (R5) |
+| B | `INC-01` (filas del último mes borradas fuera del pipeline) | `embarques_mensual` `DRIFTED` (20 vs 24 filas); sus tests de conservación fallan sobre lo publicado → **APPROVE** (R4) |
+
+`INC-01` es una **simulación** sobre la copia de lo publicado en CI/dev: en este repo no hay una
+producción persistente; en producción, el plan leería el warehouse. El agente no puede pedir
+incidentes simulados. Tampoco hay modelos incrementales: técnicamente un full-refresh produce las
+mismas tablas que una corrida normal; es destructivo porque descarta y reemplaza lo publicado.
+
+**Límites de GitHub.** El diálogo de aprobación no muestra el hash: se lee en el resumen de la
+corrida antes de aprobar. Una aprobación pendiente vence a los 30 días. Las corridas destructivas
+van de una en una; una solicitud en espera puede ser reemplazada por otra más reciente.
 
 **Por qué ahí.** Si la frontera fuera "lo que el agente decide no hacer", no existiría. Por eso
 hay tres barreras y solo la última es la frontera real:

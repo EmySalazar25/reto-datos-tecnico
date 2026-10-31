@@ -22,7 +22,7 @@ Las opciones 1 y 2 se mantienen como primeras barreras, no como la frontera.
 
 | Operación | Mecanismo |
 |---|---|
-| Full-refresh, borrar o recrear tablas publicadas | Workflow `destructivo`: solicitar es libre; ejecutar espera a un revisor en `produccion-destructiva`. `dp build --full-refresh` se niega fuera de ese job |
+| Full-refresh, borrar o recrear tablas publicadas | Workflow `destructivo`: solicitar es libre; el sistema sella una propuesta (sha256) con clasificación y recomendación deterministas; ejecutar espera a un revisor en `produccion-destructiva` y ejecuta solo la propuesta cuyo hash coincide con el revisado. `dp build --full-refresh` se niega fuera de ese job |
 | Romper un contrato | GOV-07 compara columnas y tipos contra la versión base; requiere aprobación en `aprobacion-estandar` |
 | Debilitar el estándar (bajar severidad, borrar tests o reglas, editar la política) | GOV-07; requiere aprobación en `aprobacion-estandar` |
 | Cambiar el motor, el CI o la configuración del agente | GOV-07 con las rutas protegidas del `CODEOWNERS` de la versión base |
@@ -31,6 +31,12 @@ La aprobación queda ligada a la **huella** del conjunto exacto de cambios gober
 cada cambio con su valor antes y después), no a un nombre. El CI la registra desde la API de
 GitHub. `main` reutiliza la aprobación del PR fusionado solo si calcula la misma huella; si no,
 o si falta cualquier dato, la pide otra vez.
+
+Para lo destructivo, la persona decide con información: el estado actual de cada producto en dos
+dimensiones (certificación de lo publicado e integridad frente a la reconstrucción desde
+landing), la clasificación y el riesgo de la propuesta, el impacto y una recomendación
+determinista que es informativa. La IA puede explicar; la clasificación, la recomendación, el
+hash, la verificación, la autorización y la ejecución son deterministas.
 
 Todo lo demás (construir, probar, perfilar, inyectar chaos en un sandbox, abrir PRs) no requiere
 aprobación: es el entorno de desarrollo, y lo que llegue a `main` pasa por CI.
@@ -46,6 +52,11 @@ aprobación: es el entorno de desarrollo, y lo que llegue a `main` pasa por CI.
   CODEOWNERS protegía con esa revisión lo hace cumplir GOV-07 con la aprobación del environment.
 - El mismo cambio no se aprueba dos veces (PR y merge), y un cambio editado después de aprobarlo
   vuelve a requerir aprobación.
+- En una operación destructiva, aprobar la propuesta A nunca ejecuta B: el job que ejecuta
+  recalcula el hash de la propuesta descargada y falla cerrado ante cualquier diferencia. Si se
+  rechaza, el job nunca arranca; un job de solo lectura deja la evidencia de la decisión.
+- En CI no hay una producción persistente: el incidente `INC-01` que justifica un full-refresh en
+  la demostración se simula sobre la copia de lo publicado, y la propuesta lo declara.
 - **Limitación:** el agente usa las credenciales de quien lo opera y GitHub no los distingue, por
   eso `prevent_self_review` debe quedar en `false`. Los permisos del agente niegan las rutas
   directas para aprobarse, obtener el token o hacer merge (probado con `opencode run --auto` en
