@@ -314,13 +314,26 @@ un repositorio público o un plan de pago.
 
 | Regla | Test de datos (recalcula desde staging) | Unit test (fixture con la trampa) | Chaos que lo rompe |
 |---|---|---|---|
-| R1 Fecha real o, si falta, la de cierre | `r1_fecha_embarque_*` | `ut_r1_…_en_hora_de_planta` | CH-10 |
+| R1 Fecha real o, si falta, la de cierre | `r1_fecha_embarque_*` | `ut_r1_…_en_hora_de_planta` | CH-10, CH-15 |
 | R2 Solo TRA y ENT | `r2_*` | `ut_r2_…` | CH-09 |
-| R3 Toneladas = peso documentado / 1,000 | `r3_toneladas_se_conservan` | `ut_r3_…` | CH-02, CH-03 |
-| R4 Costo por viaje, una sola vez | `r4_costo_por_viaje_se_cuenta_una_vez` | `ut_r4_…_tres_partidas…` | CH-01, CH-02, CH-08, CH-11 |
-| R5 A tiempo por fecha, solo con POD | `r5_a_tiempo_por_fecha_no_por_hora` | `ut_r5_…` (dos) | CH-05 |
+| R3 Toneladas = peso documentado / 1,000 | `r3_toneladas_se_conservan` | `ut_r3_…` | CH-02, CH-03, CH-12 |
+| R4 Costo por viaje, una sola vez | `r4_costo_por_viaje_se_cuenta_una_vez` | `ut_r4_…_tres_partidas…` | CH-01, CH-02, CH-08, CH-11, CH-14 |
+| R5 A tiempo por fecha, solo con POD | `r5_a_tiempo_por_fecha_no_por_hora` | `ut_r5_…` (dos) | CH-05, CH-13 |
 | R6 Segmento del día del embarque | `r6_segmento_vigente_en_fecha_de_embarque` | `ut_r6_…` (dos) | CH-04 |
 | R7 No identificados no se pierden | `r7_no_identificados_no_se_pierden` | `ut_r7_…` | CH-03 |
+
+**Valores posibles.** Las pruebas de conservación recalculan desde el mismo staging: un valor
+imposible del origen cuadra en ambos lados. Por eso, antes de los marts, hay pruebas de valor
+posible (`rango`, `fecha_no_posterior_a`, `fecha_no_anterior_a`):
+
+| Prueba | Detecta | Escenario |
+|---|---|---|
+| Peso de partida mayor a 0 y dentro de 1,000–45,000 kg (supuesto S11) | Peso capturado en toneladas | CH-12 |
+| POD no anterior a la salida, ambas en la zona de origen | Entrega antes del embarque | CH-13 |
+| Costo de flete no negativo, en `fct_viajes` | Signo equivocado; solo bloquea `embarques_mensual` | CH-14 |
+| Salida real no posterior a la extracción del propio registro | Fecha con el año equivocado; respeta el reloj replay | CH-15 |
+
+Con un valor imposible, el producto queda `DEGRADED` y dbt no reconstruye el mart con esos datos.
 
 Lo que trae la réplica y nadie dijo está en [`HALLAZGOS.md`](HALLAZGOS.md).
 
@@ -340,6 +353,7 @@ Lo que trae la réplica y nadie dijo está en [`HALLAZGOS.md`](HALLAZGOS.md).
 | S8 | `costo_flete_por_ton` | Se calcula con las columnas publicadas ya redondeadas, para que BI lo reproduzca exacto |
 | S9 | Filas de `cumplimiento_entrega` | Solo hay fila para (mes, segmento) con toneladas entregadas; sin POD no hay porcentaje que reportar |
 | S10 | Qué es "publicado" en el reto | La base que produce el workflow de `main` (artifact `publicado-<sha>`). Local es desarrollo |
+| S11 | Peso posible de una partida | No viene en el requerimiento. Se acepta de **1,000 a 45,000 kg** (`peso_kg_min` y `peso_kg_max` en `dbt_project.yml`): en `carga_1` va de 5,005 a 35,998 kg, y un peso capturado en toneladas queda fuera. **Pregunta para Logística:** ¿cuál es el peso mínimo y máximo posible de una partida? Los demás límites (peso > 0, costo ≥ 0, POD no antes de la salida, salida no después de la extracción) son invariantes y no requieren confirmación |
 
 ---
 
