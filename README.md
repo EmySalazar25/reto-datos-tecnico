@@ -19,7 +19,8 @@ son la evidencia de que el estándar funciona; el producto es el estándar.
 
 ## Inicio rápido
 
-Requisitos: Python 3.9 o superior, Git y `make`. Sin credenciales ni servicios externos.
+Requisitos: Python 3.9 o superior, Git y `make`, en macOS (Apple Silicon o Intel) o Linux (x86_64
+o aarch64); en Windows, dentro de WSL2. Sin credenciales ni servicios externos.
 
 ```bash
 make setup     # .venv con dependencias fijadas
@@ -61,6 +62,18 @@ cualquiera funciona con `--model`.
 Las rutas con las que el agente podría aprobarse a sí mismo están negadas y se sostienen incluso
 con `--auto` (ver [Frontera humana](#frontera-humana)), pero cualquier otro comando que debería
 preguntarte quedaría aprobado sin que lo veas.
+
+**Qué deja `make chaos`.** Si el agente corrige y recertifica, su corrección queda sin commit
+para que la revises (`git diff`; `git checkout -- dbt/` la descarta). Si no lo logra (sin cuota,
+un comando rechazado, opencode que no arranca) o interrumpes la demo, se restaura de forma
+determinista: nunca deja la falla inyectada.
+
+**Plataforma.** `make setup` registra la plataforma del entorno en `.venv/dp-plataforma.json`. Si
+`dp` corre con otra arquitectura, por ejemplo lanzado por un opencode `x86_64` bajo Rosetta en una
+Mac con Apple Silicon, se detiene con el código 4 y explica el mecanismo en lugar de un
+traceback, y `make chaos` no lanza ese agente. En Apple Silicon, opencode debe ser nativo:
+`file "$(readlink -f "$(which opencode)")"` debe decir `arm64` (el Homebrew nativo vive en
+`/opt/homebrew`). Detalle en el [ADR 0006](docs/adr/0006-plataforma-de-ejecucion.md).
 
 **Validado en vivo** (opencode 1.19, modelo gratuito, sin llave):
 
@@ -340,7 +353,8 @@ Se recortó alcance para que lo entregado funcione completo. Detalle y prioridad
 | Historial de certificaciones, HTML y catálogo en GitHub Pages | P1. Hoy la certificación vive en JSON, en el resumen de CI y en el artifact de cada corrida |
 | Capa semántica y LookML | P1. El contrato de los marts es lo que consume BI hoy; una segunda definición de cada indicador sin un test que la compare sería una fuente de desalineación |
 | Costo de consumo, regresión de performance y BigQuery real | P2. Requieren BigQuery y Looker reales; en local se reportan como `not_available` en lugar de simularse |
-| Servidor MCP | La CLI ya expone todas las herramientas al agente; un MCP duplicaría la interfaz sin agregar capacidad |
+| Plataforma completa: locks con hashes, `dp doctor`, *preflight* de `make setup` y CI multiplataforma | P1, propuesto en el [ADR 0006](docs/adr/0006-plataforma-de-ejecucion.md). En esta entrega va la guarda mínima: huella del entorno, código 4 con mecanismo y una demo de chaos que siempre se recupera |
+| Contrato de máquina de `dp` (`--json` con sobre, códigos 0–5, `capacidades`, esquemas), servidor MCP y entrada para una persona junior (primeros pasos, glosario, tutorial) | P1, propuesto en el [ADR 0007](docs/adr/0007-como-se-consume-el-agente.md). Hoy la CLI ya expone todas las herramientas al agente y la frontera humana vale para cualquier cliente |
 | Monitoreo programado | P1. El workflow existe para PR y `main`; una corrida con cron es directa cuando haya entregas reales |
 | Identidad propia del agente en GitHub | Hoy el agente actúa con las credenciales de quien lo usa. En un equipo debe tener su propia identidad (GitHub App) sin permisos de administración |
 | Modelos incrementales | El volumen del reto no lo justifica. El diseño para BigQuery (partición, clustering, `merge` por llave con ventana de reproceso) está en `PROPUESTA.md` |

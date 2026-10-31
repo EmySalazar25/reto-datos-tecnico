@@ -16,7 +16,7 @@ límites de uso. Quien evalúa clona, sigue el README y corre todo sin hablar co
 | Herramientas del agente | CLI `dp` en Python + Makefile | Lo pesado y lo verificable es código determinista con pruebas; el LLM gasta pocos tokens |
 | Agente | opencode | Funciona con proveedores gratuitos, lee `AGENTS.md`, carga skills bajo demanda y permite permisos por comando |
 | LLM | `opencode/deepseek-v4.1-flash-free` (gratuito, sin llave) | Validado en vivo: diagnosticó y corrigió un fan-out y se negó a una operación destructiva. Quien evalúa no necesita cuenta; con su propia llave puede usar otro proveedor gratuito (p. ej. Gemini) con `--model`, sin tocar el estándar. Se eligió al probar: el plan original era Gemini |
-| MCP | No en esta entrega | La CLI ya expone todas las herramientas; un servidor MCP duplicaría la interfaz |
+| MCP | No en esta entrega | La CLI ya expone todas las herramientas; un servidor MCP duplicaría la interfaz. Un MCP delgado sobre el contrato de `dp` está propuesto en el [ADR 0007](0007-como-se-consume-el-agente.md) |
 | CI/CD | GitHub Actions + environments | Gratis en repositorios públicos; los environments son la aprobación humana |
 
 ## Consecuencias
