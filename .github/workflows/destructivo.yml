@@ -1,8 +1,16 @@
 name: destructivo
 
-# Frontera humana para operaciones destructivas sobre lo publicado. Cualquiera (incluido el
-# agente) puede SOLICITAR la operación; el job que la ejecuta espera la aprobación de un
-# revisor en el environment `produccion-destructiva`. Funciona como un 2FA.
+# Frontera humana para operaciones destructivas sobre lo publicado:
+# el agente (o una persona) propone → el sistema valida y explica → una persona decide →
+# el pipeline ejecuta exactamente lo aprobado.
+#
+# 1. `plan` genera una propuesta sellada (sha256) con clasificación, riesgo y recomendación
+#    deterministas, la muestra en el resumen y la guarda como artefacto.
+# 2. `ejecutar` espera la decisión en el environment `produccion-destructiva`. Al aprobarse,
+#    descarga la propuesta, recalcula su hash contra el que se revisó y ejecuta solo lo que la
+#    propuesta dice. Cualquier diferencia: no ejecuta (falla cerrado).
+# 3. `registro` deja evidencia de la decisión, también si se rechazó (entonces `ejecutar`
+#    nunca arranca). Solo lee la API.
 
 on:
   workflow_dispatch:
@@ -17,68 +25,153 @@ on:
         type: string
         default: todos
       motivo:
-        description: Por qué es necesaria
+        description: Por qué es necesaria (texto del solicitante; no influye en la recomendación)
         type: string
         required: true
+      simular_incidente:
+        description: Condición simulada sobre la copia de lo publicado (solo CI; no decide el resultado)
+        type: choice
+        options: [ninguno, INC-01]
+        default: ninguno
 
 permissions:
   contents: read
 
+# Una operación destructiva a la vez. Una solicitud nueva espera a que termine la anterior.
+concurrency:
+  group: destructivo
+  cancel-in-progress: false
+
 jobs:
   plan:
     runs-on: ubuntu-latest
+    env:
+      DP_ENTORNO: ci
+    outputs:
+      proposal_id: ${{ steps.propuesta.outputs.proposal_id }}
+      sha256: ${{ steps.propuesta.outputs.sha256 }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.9"
       - run: make setup PYTHON=python
-      - name: Estado actual
+      - name: Reconstrucción desde landing en este commit
         run: |
           .venv/bin/dp ingest
           .venv/bin/dp build
-          .venv/bin/dp certify run || true
-      - name: Plan e impacto
+          # El resumen lo ocupa solo la propuesta: el estado de cada producto va dentro de ella.
+          env -u GITHUB_STEP_SUMMARY .venv/bin/dp certify run || true
+      - name: Propuesta, clasificación y recomendación
+        id: propuesta
         # Los inputs llegan por variables de entorno, nunca interpolados en el script.
         env:
           OPERACION: ${{ inputs.operacion }}
           PRODUCTO: ${{ inputs.producto }}
           MOTIVO: ${{ inputs.motivo }}
+          INCIDENTE: ${{ inputs.simular_incidente }}
         run: |
-          if [ "$OPERACION" = "recrear-producto" ]; then
-            .venv/bin/dp propose "$OPERACION" --producto "$PRODUCTO" --motivo "$MOTIVO" | tee -a "$GITHUB_STEP_SUMMARY"
-          else
-            .venv/bin/dp propose "$OPERACION" --motivo "$MOTIVO" | tee -a "$GITHUB_STEP_SUMMARY"
-          fi
+          .venv/bin/dp propose "$OPERACION" --producto "$PRODUCTO" --motivo "$MOTIVO" \
+            --simular-incidente "$INCIDENTE" --salida "$RUNNER_TEMP/propuesta"
+      - name: Propuesta sellada (lo que se aprueba)
+        uses: actions/upload-artifact@v4
+        with:
+          name: propuesta-${{ github.run_id }}
+          path: ${{ runner.temp }}/propuesta/
+          if-no-files-found: error
 
   ejecutar:
     needs: plan
     runs-on: ubuntu-latest
     environment: produccion-destructiva
+    permissions:
+      contents: read
+      actions: read         # leer la aprobación de esta corrida
     env:
-      DP_OPERACION_APROBADA: ${{ github.run_id }}
+      DP_ENTORNO: ci
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.9"
       - run: make setup PYTHON=python
-      - name: Ejecutar la operación aprobada
+      - name: Propuesta revisada
+        uses: actions/download-artifact@v4
+        with:
+          name: propuesta-${{ github.run_id }}
+          path: ${{ runner.temp }}/propuesta
+      - name: Verificar la propuesta y ejecutar solo lo aprobado
         env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          CORRIDA: ${{ github.run_id }}
+          SHA_REVISADO: ${{ needs.plan.outputs.sha256 }}
           OPERACION: ${{ inputs.operacion }}
           PRODUCTO: ${{ inputs.producto }}
         run: |
+          gh api "repos/$REPO/actions/runs/$CORRIDA/approvals" > "$RUNNER_TEMP/aprobaciones.json"
           .venv/bin/dp ingest
-          if [ "$OPERACION" = "recrear-producto" ]; then
-            .venv/bin/dp build --full-refresh --select "+$PRODUCTO"
-          else
-            .venv/bin/dp build --full-refresh
-          fi
+          .venv/bin/dp execute-proposal "$RUNNER_TEMP/propuesta/propuesta.json" --sha256 "$SHA_REVISADO" \
+            --commit "$GITHUB_SHA" --corrida "$CORRIDA" --operacion "$OPERACION" --producto "$PRODUCTO" \
+            --aprobaciones "$RUNNER_TEMP/aprobaciones.json"
       - name: Recertificar antes de publicar
         run: |
-          .venv/bin/dp certify run | tee -a "$GITHUB_STEP_SUMMARY"
-          .venv/bin/dp certify gate --estricto
-      - uses: actions/upload-artifact@v4
+          .venv/bin/dp certify run
+          .venv/bin/dp certify gate --estricto --exigir-certificado
+      - name: Tablas publicadas
+        uses: actions/upload-artifact@v4
         with:
           name: publicado-${{ github.sha }}-${{ github.run_id }}
           path: deacero.duckdb
+      - name: Evidencia de la ejecución
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ejecucion-${{ github.run_id }}
+          include-hidden-files: true
+          path: |
+            .evidence/ejecucion.json
+            .certification/
+
+  registro:
+    needs: [plan, ejecutar]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - name: Decisión humana y resultado
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          CORRIDA: ${{ github.run_id }}
+          PROPUESTA: ${{ needs.plan.outputs.proposal_id }}
+          SHA_REVISADO: ${{ needs.plan.outputs.sha256 }}
+          EJECUTAR: ${{ needs.ejecutar.result }}
+        run: |
+          gh api "repos/$REPO/actions/runs/$CORRIDA/approvals" > aprobaciones.json || echo '[]' > aprobaciones.json
+          FILTRO='[.[] | select(any(.environments[]; .name == "produccion-destructiva"))] | last'
+          DECISION=$(jq -r "$FILTRO | .state // \"sin decisión\"" aprobaciones.json)
+          REVISOR=$(jq -r "$FILTRO | .user.login // \"-\"" aprobaciones.json)
+          PUBLICADOS=$(gh api "repos/$REPO/actions/runs/$CORRIDA/artifacts" \
+            --jq '[.artifacts[] | select(.name | startswith("publicado-")) | .name]' || echo '[]')
+          jq -n --arg propuesta "$PROPUESTA" --arg sha "$SHA_REVISADO" --arg corrida "$CORRIDA" \
+            --arg decision "$DECISION" --arg revisor "$REVISOR" --arg ejecutar "$EJECUTAR" --argjson publicados "$PUBLICADOS" \
+            '{proposal_id: $propuesta, sha256: $sha, corrida: $corrida, decision_humana: $decision, revisor: $revisor,
+              ejecutar: $ejecutar, publicados: $publicados}' > decision.json
+          {
+            echo "## REGISTRO DE LA DECISIÓN"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Proposal ID | \`$PROPUESTA\` |"
+            echo "| SHA256 revisado | \`$SHA_REVISADO\` |"
+            echo "| Decisión humana en \`produccion-destructiva\` | **$DECISION** ($REVISOR) |"
+            echo "| Job \`ejecutar\` | $EJECUTAR |"
+            echo "| Artefactos \`publicado-*\` | $(jq -r 'length' <<< "$PUBLICADOS") |"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Evidencia de la decisión
+        uses: actions/upload-artifact@v4
+        with:
+          name: decision-${{ github.run_id }}
+          path: decision.json
