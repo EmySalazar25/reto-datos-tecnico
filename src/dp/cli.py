@@ -57,6 +57,11 @@ def cmd_certify_gate(args: argparse.Namespace) -> int:
     if not catalog.exists():
         print("gate: no hay certificación")
         return 1
+    reasons, command = _staleness(json.loads(catalog.read_text(encoding="utf-8")).get("evaluation") or {})
+    if reasons:
+        _github_append("GITHUB_OUTPUT", "requiere_aprobacion=false\n")
+        print(f"gate: la certificación está desactualizada ({'; '.join(reasons)}); corre `{command}`")
+        return 1
     blocked, approval_only = [], []
     for p in json.loads(catalog.read_text(encoding="utf-8"))["products"]:
         if p["status"] != "NOT_CERTIFIED":
@@ -149,20 +154,36 @@ def _load_cert(product: str) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _staleness(evaluation: dict) -> tuple:
+    from dp.certify import engine
+
+    return engine.staleness(evaluation, paths.EVIDENCE_DIR, paths.ROOT, POLICY)
+
+
 def cmd_certify_status(args: argparse.Namespace) -> int:
     from dp.certify import render
 
     if args.producto:
-        print(render.agent_status(_load_cert(args.producto)))
-        return 0
+        prod = _load_cert(args.producto)
+        stale = _staleness(prod["evaluation"])
+        print(render.agent_status(prod, stale))
+        return 1 if stale[0] else 0
     catalog = CERT_DIR / "catalogo.json"
     if not catalog.exists():
         print("no hay certificaciones: corre `dp certify run`")
         return 1
     data = json.loads(catalog.read_text(encoding="utf-8"))
+    evaluation = data.get("evaluation") or {}
+    reasons, command = _staleness(evaluation)
+    if reasons:
+        print(f"CERTIFICACIÓN DESACTUALIZADA: la última ({evaluation.get('generated_at', '?')}) no describe el estado actual")
+        for r in reasons:
+            print(f"  · {r}")
+        print(f"  corre: {command}")
     for p in data["products"]:
-        print(f"{p['product']:<24} {p['status']:<24} salud {p['health']:<9} razones: {', '.join(p['reasons']) or '-'}")
-    return 0
+        status = f"DESACTUALIZADA (última: {p['status']})" if reasons else p["status"]
+        print(f"{p['product']:<24} {status:<24} salud {p['health']:<9} razones: {', '.join(p['reasons']) or '-'}")
+    return 1 if reasons else 0
 
 
 def _failing_rows(compiled_sql: str, limit: int = 5) -> dict:
@@ -181,6 +202,9 @@ def _failing_rows(compiled_sql: str, limit: int = 5) -> dict:
 
 def cmd_certify_explain(args: argparse.Namespace) -> int:
     prod = _load_cert(args.producto)
+    reasons, command = _staleness(prod["evaluation"])
+    if reasons:
+        print(f"AVISO: certificación desactualizada ({'; '.join(reasons)}). Corre `{command}` antes de diagnosticar.")
     check = next((c for c in prod["checks"] if c["id"] == args.check), None)
     if check is None:
         print(f"{args.check} no existe en la certificación de {args.producto}")

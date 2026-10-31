@@ -27,6 +27,30 @@ def load_policy(path: Path) -> tuple:
     return yaml.safe_load(raw) or {}, "sha256:" + hashlib.sha256(raw).hexdigest()
 
 
+def staleness(evaluation: dict, evidence_dir: Path, root: Path, policy_path: Path) -> tuple:
+    """Por qué una certificación guardada ya no describe el estado actual, y qué correr.
+
+    Devuelve (razones, comando). Sin razones, la certificación está vigente. Una certificación
+    vieja nunca debe leerse como el estado actual: el agente empieza por `dp certify status`.
+    """
+    reasons, rebuild = [], False
+    if evaluation.get("engine_version") != ENGINE_VERSION:
+        reasons.append(f"el motor de certificación cambió ({evaluation.get('engine_version')} → {ENGINE_VERSION})")
+    if policy_path.exists() and evaluation.get("policy_digest") != load_policy(policy_path)[1]:
+        reasons.append("la política cambió después de certificar")
+    if evaluation.get("evidence_digest") != evidence.evidence_digest(evidence_dir):
+        reasons.append("hubo una construcción u otra evidencia nueva después de certificar")
+    build = evidence.load_json(evidence_dir / "build.json") or {}
+    if not build.get("entradas"):
+        reasons.append("la última construcción no registró la huella del código y las entregas")
+        rebuild = True
+    elif build["entradas"] != evidence.inputs_digest(root):
+        reasons.append("el código de dbt o las entregas cambiaron después de la última construcción")
+        rebuild = True
+    command = "dp ingest && dp build && dp certify run" if rebuild else "dp certify run"
+    return reasons, command
+
+
 def resolve_as_of(registry: list, explicit: str | None) -> tuple:
     if explicit:
         ts = _parse_ts(explicit)
