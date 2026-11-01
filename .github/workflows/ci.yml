@@ -43,6 +43,31 @@ jobs:
           curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz | tar -xz gitleaks
           ./gitleaks detect --source . --redact --verbose
 
+  # El camino reproducible (ADR 0008): la misma imagen, nativa en x86_64 y en arm64, corre lo
+  # mismo que una instalación nativa. Se ejecuta con el usuario del runner, como en Linux.
+  contenedor:
+    name: contenedor (${{ matrix.arquitectura }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arquitectura: x86_64
+            runner: ubuntu-latest
+          - arquitectura: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Imagen
+        run: docker compose build
+      - name: Pruebas, pipeline, idempotencia y chaos dentro del contenedor
+        run: |
+          export DP_UID="$(id -u)" DP_GID="$(id -g)"
+          docker compose run --rm -T dp make test
+          docker compose run --rm -T dp make all
+          docker compose run --rm -T dp make verify
+          docker compose run --rm -T -e DP_ENTORNO=ci dp make chaos-suite
+
   certificacion:
     needs: herramientas
     runs-on: ubuntu-latest
