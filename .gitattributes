@@ -1,0 +1,7 @@
+# Finales de línea fijos en cualquier sistema. En Windows, Git convierte por omisión el texto a
+# CRLF al clonar; el Makefile y los scripts fallarían dentro del contenedor Linux.
+* text=auto eol=lf
+
+# Las entregas de la réplica se conservan byte por byte, tal como llegaron del origen.
+data/replica/** -text
+*.duckdb binary

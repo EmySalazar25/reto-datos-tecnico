@@ -1,6 +1,8 @@
 # ADR 0006. La plataforma de ejecución se detecta en el setup y se verifica en cada corrida
 
-**Estado:** propuesta (guarda mínima implementada; ver [Estado en esta entrega](#estado-en-esta-entrega))
+**Estado:** propuesta para la instalación nativa (guarda mínima implementada; ver [Estado en esta
+entrega](#estado-en-esta-entrega)). El camino recomendado es el contenedor del
+[ADR 0008](0008-contenedor-reproducible.md), que evita estas fallas en lugar de detectarlas.
 
 ## Contexto
 
@@ -91,9 +93,10 @@ Implementado, porque cubre el caso descrito sin cambiar cómo se instalan las de
 | Guarda en `dp` | Punto de entrada `dp.entrada`: compara el proceso con la huella y traduce el error de importar `duckdb` con otra arquitectura. Sale con `4` y el mecanismo, y le pide a un agente no repararlo. **Sin huella no bloquea**, para no romper entornos anteriores |
 | Demo de chaos | Revisa la arquitectura de opencode antes de lanzarlo. **Restaura la falla inyectada siempre** que el agente no recertifique, no arranque, no pueda correr en la plataforma o la demo se interrumpa |
 
-Pendiente (P1): el *preflight* de `make setup` (plataforma no soportada, Python menor a 3.9,
-Rosetta), los locks con hashes, `make lock`, `dp doctor`, la regla en `AGENTS.md` y la matriz de
-CI.
+Pendiente (P1) para la instalación nativa: el *preflight* de `make setup` (plataforma no
+soportada, Python menor a 3.9, Rosetta), los locks con hashes, `dp doctor`, la regla en
+`AGENTS.md` y la matriz de CI en macOS. El contenedor ([ADR 0008](0008-contenedor-reproducible.md))
+ya tiene su lock con hashes, `make lock` y CI en Linux x86_64 y arm64.
 
 ## Notas de revisión
 

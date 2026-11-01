@@ -19,8 +19,51 @@ son la evidencia de que el estándar funciona; el producto es el estándar.
 
 ## Inicio rápido
 
+Dos caminos con el mismo resultado, sin credenciales ni servicios externos. **Con Docker** es el
+recomendado: es igual en Windows, macOS (Intel o Apple Silicon) y Linux, y trae dentro el
+sistema, Python, las dependencias exactas y el agente. **Nativo** no requiere Docker.
+
+### Con Docker (Windows, macOS o Linux)
+
+Requisitos: Git y Docker con Compose (Docker Desktop en Windows y macOS; en Windows, con WSL2, su
+opción por omisión). No hace falta Python ni `make` en la máquina.
+
+```bash
+git clone https://github.com/EmySalazar25/reto-datos-tecnico.git
+cd reto-datos-tecnico
+docker compose build                          # la primera vez, 1 a 2 minutos
+docker compose run --rm dp make all           # ingesta + dbt build + certificación
+docker compose run --rm dp make verify        # corre todo dos veces y compara cada tabla
+docker compose run --rm dp make chaos         # rompe algo a propósito; el agente corre dentro
+docker compose run --rm dp make chaos-suite   # el estándar detecta las fallas del catálogo
+docker compose run --rm dp make test          # pruebas de las herramientas
+docker compose run --rm dp opencode           # el agente, en modo interactivo
+```
+
+Los comandos son los mismos en PowerShell, cmd, macOS y Linux. Con `make` en la máquina hay
+atajos: `make docker-all`, `make docker-chaos`, `make docker-agente`, `make docker-shell`.
+
+- **La base vive en un volumen de Docker**, no en la carpeta del repo: en Windows y macOS ese
+  disco compartido es lento y DuckDB puede no poder bloquear el archivo. Para tenerla como
+  `./deacero.duckdb`: `docker compose run --rm dp cp /datos/deacero.duckdb /workspace/` (o
+  `make docker-exportar`). `docker compose down -v` borra el volumen.
+- **En Linux, o con el repo clonado dentro de WSL2**, usa los atajos `make docker-*` o antepón
+  `DP_UID=$(id -u) DP_GID=$(id -g)` para que los archivos generados sean tuyos y no de root.
+- **En Windows**, el repo funciona aunque Git convierta los finales de línea (`.gitattributes`
+  los fija). Si se siente lento, clónalo dentro de WSL2 en lugar de en `C:\`.
+
+| Si ves | Qué pasa |
+|---|---|
+| `Cannot connect to the Docker daemon` o `error during connect` | Docker Desktop no está abierto |
+| Un error de certificado al construir | Un proxy de la red intercepta TLS; construye desde otra red o agrega su certificado a Docker |
+| `permission denied` al borrar archivos generados, en Linux | Se corrió sin `DP_UID`; `docker compose run --rm dp make clean` los borra |
+
+Detalle, alternativas y límites en el [ADR 0008](docs/adr/0008-contenedor-reproducible.md).
+
+### Nativo (macOS o Linux)
+
 Requisitos: Python 3.9 o superior, Git y `make`, en macOS (Apple Silicon o Intel) o Linux (x86_64
-o aarch64); en Windows, dentro de WSL2. Sin credenciales ni servicios externos.
+o aarch64). En Windows, usa Docker o WSL2.
 
 ```bash
 make setup     # .venv con dependencias fijadas
@@ -31,7 +74,9 @@ make chaos-suite  # verifica en sandbox que el estándar detecta las fallas del 
 make test      # pruebas de las herramientas
 ```
 
-Resultado esperado de `make all`:
+### Resultado esperado
+
+`make all`, por cualquiera de los dos caminos:
 
 ```
 cumplimiento_entrega     CERTIFIED                salud HEALTHY   razones: -
@@ -44,7 +89,7 @@ Las tablas quedan en el esquema `mart_logistica` de `deacero.duckdb`, como pide 
 
 | | |
 |---|---|
-| Agente | [opencode](https://opencode.ai) 1.19 (`npm i -g opencode-ai`) |
+| Agente | [opencode](https://opencode.ai) 1.19: viene en el contenedor (1.19.4); en la instalación nativa, `npm i -g opencode-ai` |
 | Modelo validado | `opencode/deepseek-v4.1-flash-free`: modelo gratuito de opencode, **sin llave ni tarjeta** |
 | Con su propia llave | Cualquier proveedor gratuito vía variable de entorno, p. ej. `GOOGLE_GENERATIVE_AI_API_KEY` y `--model google/gemini-2.5-flash`. Nunca en el repo |
 | Configuración | [`opencode.json`](opencode.json) (modelo y permisos), [`AGENTS.md`](AGENTS.md) (contexto), [`.agents/skills/`](.agents/skills) (recetas) |
@@ -54,6 +99,17 @@ opencode                                          # desde la raíz del repo (ah�
 opencode --model google/gemini-2.5-flash          # con su llave en GOOGLE_GENERATIVE_AI_API_KEY
 DP_AGENTE_MODELO=google/gemini-2.5-flash make chaos   # la demo de chaos con otro modelo
 ```
+
+Con Docker, lo mismo dentro del contenedor; `-e` sin valor pasa la variable de tu terminal:
+
+```bash
+docker compose run --rm dp opencode
+docker compose run --rm -e GOOGLE_GENERATIVE_AI_API_KEY dp opencode --model google/gemini-2.5-flash
+docker compose run --rm -e GOOGLE_GENERATIVE_AI_API_KEY -e DP_AGENTE_MODELO=google/gemini-2.5-flash dp make chaos
+```
+
+Dentro del contenedor el agente no tiene tus credenciales de GitHub: diagnostica, corrige y
+recertifica, pero el push y el PR los haces tú desde tu máquina.
 
 Los modelos gratuitos de opencode rotan: `opencode models opencode` lista los vigentes y
 cualquiera funciona con `--model`.
@@ -68,7 +124,9 @@ para que la revises (`git diff`; `git checkout -- dbt/` la descarta). Si no lo l
 un comando rechazado, opencode que no arranca) o interrumpes la demo, se restaura de forma
 determinista: nunca deja la falla inyectada.
 
-**Plataforma.** `make setup` registra la plataforma del entorno en `.venv/dp-plataforma.json`. Si
+**Plataforma.** Con Docker no hay forma de mezclar arquitecturas: opencode, `dp` y `duckdb`
+vienen en la misma imagen, nativa de tu máquina. En la instalación nativa, `make setup` registra
+la plataforma del entorno en `.venv/dp-plataforma.json`. Si
 `dp` corre con otra arquitectura, por ejemplo lanzado por un opencode `x86_64` bajo Rosetta en una
 Mac con Apple Silicon, se detiene con el código 4 y explica el mecanismo en lugar de un
 traceback, y `make chaos` no lanza ese agente. En Apple Silicon, opencode debe ser nativo:
@@ -367,7 +425,8 @@ Se recortó alcance para que lo entregado funcione completo. Detalle y prioridad
 | Historial de certificaciones, HTML y catálogo en GitHub Pages | P1. Hoy la certificación vive en JSON, en el resumen de CI y en el artifact de cada corrida |
 | Capa semántica y LookML | P1. El contrato de los marts es lo que consume BI hoy; una segunda definición de cada indicador sin un test que la compare sería una fuente de desalineación |
 | Costo de consumo, regresión de performance y BigQuery real | P2. Requieren BigQuery y Looker reales; en local se reportan como `not_available` en lugar de simularse |
-| Plataforma completa: locks con hashes, `dp doctor`, *preflight* de `make setup` y CI multiplataforma | P1, propuesto en el [ADR 0006](docs/adr/0006-plataforma-de-ejecucion.md). En esta entrega va la guarda mínima: huella del entorno, código 4 con mecanismo y una demo de chaos que siempre se recupera |
+| Plataforma completa en la instalación nativa: locks con hashes, `dp doctor`, *preflight* de `make setup` y CI en macOS | P1, propuesto en el [ADR 0006](docs/adr/0006-plataforma-de-ejecucion.md). El camino recomendado, el contenedor ([ADR 0008](docs/adr/0008-contenedor-reproducible.md)), ya tiene lock con hashes y CI en x86_64 y arm64; la instalación nativa tiene la guarda mínima: huella del entorno, código 4 con mecanismo y una demo de chaos que siempre se recupera |
+| Prueba en Windows dentro del CI | Los runners de Windows de GitHub solo corren contenedores Windows. Windows usa el mismo contenedor Linux que se prueba en x86_64, con finales de línea fijados por `.gitattributes` |
 | Contrato de máquina de `dp` (`--json` con sobre, códigos 0–5, `capacidades`, esquemas), servidor MCP y entrada para una persona junior (primeros pasos, glosario, tutorial) | P1, propuesto en el [ADR 0007](docs/adr/0007-como-se-consume-el-agente.md). Hoy la CLI ya expone todas las herramientas al agente y la frontera humana vale para cualquier cliente |
 | Monitoreo programado | P1. El workflow existe para PR y `main`; una corrida con cron es directa cuando haya entregas reales |
 | Identidad propia del agente en GitHub | Hoy el agente actúa con las credenciales de quien lo usa. En un equipo debe tener su propia identidad (GitHub App) sin permisos de administración |
@@ -401,4 +460,5 @@ Se recortó alcance para que lo entregado funcione completo. Detalle y prioridad
 | [`standard/`](standard) | Política del estándar y catálogo de chaos |
 | [`tests/`](tests) | Pruebas de las herramientas, incluida una fuente y un producto de otro dominio |
 | [`.github/`](.github) | CI, workflow destructivo y CODEOWNERS |
+| [`Dockerfile`](Dockerfile), [`compose.yaml`](compose.yaml), [`docker/`](docker), [`requirements.lock`](requirements.lock) | Entorno reproducible para cualquier máquina ([ADR 0008](docs/adr/0008-contenedor-reproducible.md)) |
 | [`HALLAZGOS.md`](HALLAZGOS.md), [`PROPUESTA.md`](PROPUESTA.md) | Problemas encontrados en los datos y plan de adopción |

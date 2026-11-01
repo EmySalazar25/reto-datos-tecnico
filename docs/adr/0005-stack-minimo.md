@@ -22,6 +22,8 @@ límites de uso. Quien evalúa clona, sigue el README y corre todo sin hablar co
 ## Consecuencias
 
 - `make setup` instala todo desde PyPI; no hay servicios que levantar ni credenciales.
+- El [ADR 0008](0008-contenedor-reproducible.md) empaqueta este mismo stack en un contenedor para
+  correrlo igual en cualquier máquina; no cambia ninguna pieza.
 - dbt 1.10 ya no recibe parches regulares. En producción se usaría la línea vigente con
   Python 3.10 o superior; el proyecto no usa nada específico de 1.10.
 - El diseño para BigQuery (partición, clustering, macros por adaptador para fechas y zonas
