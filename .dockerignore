@@ -1,0 +1,7 @@
+# La imagen solo necesita las dependencias y el paquete `dp`; el repo se monta al correr.
+*
+!requirements.lock
+!pyproject.toml
+!src/
+!docker/
+**/__pycache__

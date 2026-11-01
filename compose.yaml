@@ -1,0 +1,27 @@
+# Entorno reproducible del estándar (ADR 0008). El mismo comando en Windows, macOS y Linux:
+#
+#   docker compose run --rm dp make all          # ingesta + build + certificación
+#   docker compose run --rm dp make test         # pruebas de las herramientas
+#   docker compose run --rm dp opencode          # el agente, dentro del contenedor
+#
+# En Linux, para que los archivos que se generan sean tuyos y no de root:
+#   DP_UID=$(id -u) DP_GID=$(id -g) docker compose run --rm dp make all   (o `make docker-all`)
+services:
+  dp:
+    build: .
+    image: reto-datos-tecnico:local
+    user: "${DP_UID:-0}:${DP_GID:-0}"
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+      # La base vive en un volumen de Docker, no en el disco montado: en Windows y macOS ese
+      # montaje es lento y DuckDB puede no poder bloquear el archivo. `make docker-exportar` la
+      # copia a ./deacero.duckdb.
+      - datos:/datos
+    tmpfs:
+      # Oculta el .venv de la máquina (otro sistema operativo o arquitectura) dentro del contenedor.
+      - /workspace/.venv:mode=1777
+    stdin_open: true
+
+volumes:
+  datos:
