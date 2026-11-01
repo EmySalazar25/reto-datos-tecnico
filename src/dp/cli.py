@@ -363,6 +363,11 @@ def chaos_demo(scenario_id: str) -> int:
 
     from dp import chaos, plataforma
 
+    # Sin terminal (CI, contenedor, salida redirigida) Python retiene sus mensajes en un búfer y
+    # saldrían después de los de dbt y del agente, que escriben directo: se escribe línea a línea.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True)
+
     def step(title: str) -> None:
         print(f"\n=== {title}")
 
