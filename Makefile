@@ -91,4 +91,4 @@ docker-exportar:
 	@echo "base copiada a ./deacero.duckdb"
 
 docker-%:
-	$(DOCKER_USUARIO) $(COMPOSE) run --rm dp make $*
+	$(DOCKER_USUARIO) $(COMPOSE) run --rm dp make $* ESCENARIO=$(ESCENARIO)
