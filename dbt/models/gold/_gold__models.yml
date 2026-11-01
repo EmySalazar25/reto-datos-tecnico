@@ -33,6 +33,15 @@ models:
       - name: costo_flete_mxn
         data_tests:
           - not_null
+          # Invariante: un costo de flete no es negativo (CH-14). Aquí solo bloquea embarques_mensual.
+          - rango:
+              name: costo_flete_no_negativo_fct_viajes
+              arguments:
+                minimo: 0
+              config:
+                meta:
+                  rule: R4
+                  verifica: valor_posible
 
   - name: fct_embarques
     description: Hecho de partidas embarcadas. Grano viaje × partida. No lleva costo de flete.

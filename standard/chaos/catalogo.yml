@@ -236,9 +236,110 @@ escenarios:
       destino: carga_chaos_sin_costo
       filtro: {columna: Estatus, igual: PRO}
       max_filas: 5
-      cambios: {Estatus: TRA, FechaRealEmbarque: "2026-06-29 10:00:00", CostoFlete: ""}
+      # Salida anterior a sus POD (3 al 6 de enero): el escenario prueba solo el costo faltante.
+      cambios: {Estatus: TRA, FechaRealEmbarque: "2026-01-02 10:00:00", CostoFlete: ""}
       incremento_lsn: 1000000000
     debe_detectar:
       tests: [not_null_fct_viajes_costo_flete_mxn]
     estado_esperado:
       embarques_mensual: DEGRADED
+      cumplimiento_entrega: CERTIFIED
+
+  # CH-12 a CH-15: valores imposibles. La estructura y las reglas cuadran, pero el valor no puede
+  # existir; las pruebas de conservación no lo ven porque recalculan desde el mismo staging.
+  - id: CH-12
+    nombre: peso_capturado_en_toneladas
+    tipo: datos
+    reglas: [R3]
+    rompe: Una planta empieza a capturar el peso documentado en toneladas en lugar de kilos.
+    mecanismo: >
+      Unidad equivocada en el origen. 13149 kg llega como 13.149; las toneladas caen mil veces en
+      esas partidas y el costo por tonelada sube. Las pruebas de conservación no lo ven porque
+      recalculan desde el mismo staging; lo detecta el rango plausible del peso por partida.
+    inyeccion:
+      accion: entrega_derivada
+      origen: carga_1
+      archivo: fle_viaje_det.csv
+      destino: carga_chaos_peso_toneladas
+      filtro: {columna: IdPartida, igual: "1"}
+      max_filas: 300
+      cambios: {PesoKg: "13.149"}
+      incremento_lsn: 1000000000
+    debe_detectar:
+      tests: [peso_kg_en_rango_stg_fle__partidas]
+    estado_esperado:
+      embarques_mensual: DEGRADED
+      cumplimiento_entrega: DEGRADED
+
+  - id: CH-13
+    nombre: pod_antes_del_embarque
+    tipo: datos
+    reglas: [R5]
+    rompe: El POD llega con una fecha anterior a la salida del viaje.
+    mecanismo: >
+      Fechas incoherentes. Un viaje no puede entregarse antes de salir; con un POD temprano todo
+      queda a tiempo y el porcentaje sube sin error. La prueba vive en el modelo de viajes
+      embarcados, que alimenta a los dos marts: ambos quedan degradados hasta que el origen
+      corrija el POD.
+    inyeccion:
+      accion: entrega_derivada
+      origen: carga_1
+      archivo: fle_entrega.csv
+      destino: carga_chaos_pod_temprano
+      filtro: {columna: _airbyte_extracted_at, igual: "2026-07-01T08:00:00.000Z"}
+      max_filas: 5000
+      cambios: {FechaEntrega: "2026-01-01 09:00:00.000"}
+      incremento_lsn: 1000000000
+    debe_detectar:
+      tests: [pod_no_anterior_al_embarque_int_viajes__embarcados]
+    estado_esperado:
+      cumplimiento_entrega: DEGRADED
+      embarques_mensual: DEGRADED
+
+  - id: CH-14
+    nombre: costo_flete_negativo
+    tipo: datos
+    reglas: [R4]
+    rompe: Notas de crédito del transportista se capturan como costo de flete negativo.
+    mecanismo: >
+      Signo equivocado. La suma resta en lugar de sumar y el costo por tonelada baja sin error.
+      La prueba vive en el hecho de viajes, que solo alimenta a embarques_mensual: el
+      cumplimiento de entrega no se bloquea.
+    inyeccion:
+      accion: entrega_derivada
+      origen: carga_1
+      archivo: fle_viaje.csv
+      destino: carga_chaos_costo_negativo
+      filtro: {columna: Estatus, igual: ENT}
+      max_filas: 50
+      cambios: {CostoFlete: "-18500"}
+      incremento_lsn: 1000000000
+    debe_detectar:
+      tests: [costo_flete_no_negativo_fct_viajes]
+    estado_esperado:
+      embarques_mensual: DEGRADED
+      cumplimiento_entrega: CERTIFIED
+
+  - id: CH-15
+    nombre: embarque_en_el_futuro
+    tipo: datos
+    reglas: [R1]
+    rompe: La fecha real de embarque se captura con el año equivocado.
+    mecanismo: >
+      Fecha imposible. Un embarque posterior a la extracción del propio registro crea un mes que
+      todavía no ocurre y saca toneladas y costo de su mes real. Se compara contra la extracción
+      de la misma versión, no contra la hora actual, así que respeta el reloj replay.
+    inyeccion:
+      accion: entrega_derivada
+      origen: carga_1
+      archivo: fle_viaje.csv
+      destino: carga_chaos_embarque_futuro
+      filtro: {columna: Estatus, igual: ENT}
+      max_filas: 20
+      cambios: {FechaRealEmbarque: "2027-03-15 10:00:00.000"}
+      incremento_lsn: 1000000000
+    debe_detectar:
+      tests: [fecha_real_embarque_no_posterior_a_extraccion_stg_fle__viajes]
+    estado_esperado:
+      embarques_mensual: DEGRADED
+      cumplimiento_entrega: DEGRADED

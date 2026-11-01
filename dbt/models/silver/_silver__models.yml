@@ -55,10 +55,24 @@ models:
           - sin_fecha_centinela:
               config:
                 tags: [engineering]
+      - name: fecha_embarque_origen
+        description: La fecha de embarque en la zona de origen (antes de llevarla a hora de planta).
       - name: estatus
         data_tests:
           - accepted_values:
               arguments:
                 values: [TRA, ENT]
+      - name: fecha_entrega
+        description: Fecha del POD (zona de origen). Nula si el viaje aún no tiene POD.
+        data_tests:
+          # Invariante: un viaje no se entrega antes de salir (CH-13). Ambas en la zona de origen.
+          - fecha_no_anterior_a:
+              name: pod_no_anterior_al_embarque_int_viajes__embarcados
+              arguments:
+                columna_referencia: fecha_embarque_origen
+              config:
+                meta:
+                  rule: R5
+                  verifica: valor_posible
       - name: a_tiempo
         description: Nulo cuando el viaje aún no tiene POD.
