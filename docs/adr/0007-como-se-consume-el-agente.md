@@ -1,6 +1,10 @@
 # ADR 0007. Cómo se consume el agente: un contrato en `dp` y tres tipos de cliente
 
-**Estado:** propuesta (no implementada en esta entrega; ver [Notas de revisión](#notas-de-revisión))
+**Estado:** propuesta. En esta entrega está implementado un **MCP mínimo** (sección 2): 3 capacidades
+(`pipeline_status`, `diagnose` y `propose_destructive_operation`), sobre el **protocolo estándar con la
+biblioteca estándar de Python**, sin el SDK. Por eso funciona con Python 3.9 y no aplica la limitación
+de 3.10 descrita abajo. El resto (contrato `dp/1`, códigos de salida, más capacidades y la entrada
+para juniors) sigue como propuesta; ver [Notas de revisión](#notas-de-revisión).
 
 ## Contexto
 
