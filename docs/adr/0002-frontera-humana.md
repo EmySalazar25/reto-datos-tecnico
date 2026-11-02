@@ -22,10 +22,22 @@ Las opciones 1 y 2 se mantienen como primeras barreras, no como la frontera.
 
 | Operación | Mecanismo |
 |---|---|
-| Full-refresh, borrar o recrear tablas publicadas | Workflow `destructivo`: solicitar es libre; el sistema sella una propuesta (sha256) con clasificación y recomendación deterministas; ejecutar espera a un revisor en `produccion-destructiva` y ejecuta solo la propuesta cuyo hash coincide con el revisado. `dp build --full-refresh` se niega fuera de ese job |
+| Full-refresh, borrar o recrear tablas publicadas | Workflow `destructivo`: solicitar es libre; el sistema sella una propuesta (sha256) con clasificación y recomendación deterministas; ejecutar espera a un revisor en `produccion-destructiva` (solo desde ramas protegidas) y ejecuta solo la propuesta cuyo hash coincide con el revisado. `dp build --full-refresh` se niega siempre, sin excepciones por variable de entorno: la única ruta es `dp execute-proposal` dentro de ese job |
 | Romper un contrato | GOV-07 compara columnas y tipos contra la versión base; requiere aprobación en `aprobacion-estandar` |
 | Debilitar el estándar (bajar severidad, borrar tests o reglas, editar la política) | GOV-07; requiere aprobación en `aprobacion-estandar` |
-| Cambiar el motor, el CI o la configuración del agente | GOV-07 con las rutas protegidas del `CODEOWNERS` de la versión base |
+| Modificar o borrar una entrega de la réplica | GOV-07: las entregas son de solo agregar. Una entrega nueva entra libre; modificar o borrar un archivo que ya estaba en la versión base requiere aprobación en `aprobacion-estandar` |
+| Cambiar el motor, el CI, la configuración de cualquier agente o el contenedor | GOV-07 con las rutas protegidas del `CODEOWNERS` de la versión base |
+| Llegar a `main` | Protección de rama con `enforce_admins`: los checks requeridos valen también para administradores; sin push directo ni `--admin` |
+
+### Guardrails y controles: el agente puede cambiar, las garantías no
+
+Las reglas que viven en la configuración de un cliente (`opencode.json`, los permisos de Claude
+Code o de Cursor, las instrucciones de `AGENTS.md`) son **guardrails**: detienen errores temprano
+y le explican al agente qué no hacer, pero cada cliente las aplica distinto y todas se pueden
+evadir (otra forma del mismo comando, un modo automático, otro cliente). Se conservan, pero
+ninguna garantía depende solo de ellas. Las garantías viven en **controles** que no dependen del
+cliente: `dp`, los tests, la certificación, el CI, la protección de `main`, los environments y el
+alcance de la credencial que recibe el agente.
 
 La aprobación queda ligada a la **huella** del conjunto exacto de cambios gobernados (sha256 de
 cada cambio con su valor antes y después), no a un nombre. El CI la registra desde la API de
@@ -57,10 +69,24 @@ aprobación: es el entorno de desarrollo, y lo que llegue a `main` pasa por CI.
   rechaza, el job nunca arranca; un job de solo lectura deja la evidencia de la decisión.
 - En CI no hay una producción persistente: el incidente `INC-01` que justifica un full-refresh en
   la demostración se simula sobre la copia de lo publicado, y la propuesta lo declara.
-- **Limitación:** el agente usa las credenciales de quien lo opera y GitHub no los distingue, por
-  eso `prevent_self_review` debe quedar en `false`. Los permisos del agente niegan las rutas
-  directas para aprobarse, obtener el token o hacer merge (probado con `opencode run --auto` en
-  un sandbox sin credenciales), pero un agente que escribe código y lo ejecuta con herramientas
-  permitidas lo hace con esa misma identidad. El cierre de fondo es una identidad propia para el
-  agente (GitHub App o token sin permiso para aprobar despliegues ni administrar), en un entorno
-  sin acceso a las credenciales de la persona.
+- **Credencial del agente.** En el contenedor ([ADR 0008](0008-contenedor-reproducible.md)) el
+  agente no ve la sesión de `gh` ni el `GH_TOKEN` de la persona: solo recibe, si la persona lo
+  define, un token de grano fino con Contents y Pull requests. Según los permisos de GitHub, sin
+  Deployments no puede aprobar un environment, sin Administration no puede tocar la protección ni
+  los environments, sin Actions de escritura no puede disparar el workflow destructivo y sin
+  Workflows no puede empujar cambios al CI. `scripts/verificar-credencial-agente.sh` lo
+  comprueba con sondas inocuas contra el repositorio real.
+- **Limitación: una sola cuenta.** Ese token pertenece a la misma persona que revisa, así que
+  `prevent_self_review` sigue en `false` (con `true` nadie podría aprobar) y GitHub atribuye los
+  PRs del agente a esa persona. Con Contents de escritura el token también puede fusionar un PR
+  cuyos checks requeridos pasen; un cambio gobernado sigue esperando la aprobación humana del
+  check `aprobacion`.
+- **Limitación: instalación nativa.** Fuera del contenedor el agente corre con la sesión completa
+  de `gh` de la persona; ahí, no aprobarse ni fusionar depende de los guardrails del cliente. Por
+  eso el camino recomendado para el agente es el contenedor.
+- El cierre de fondo es una identidad propia para el agente (GitHub App o cuenta de servicio sin
+  rol de revisor ni de administración). Con ella, `prevent_self_review: true` y la revisión
+  obligatoria del PR vuelven a ser posibles.
+- **Limitación: el CI de un PR corre con la versión del PR.** Un PR que modifica el workflow o el
+  motor se juzga con esa versión modificada; hoy lo cierra el merge humano (y el token del agente
+  no puede empujar cambios al CI). Correr la gobernanza desde la versión base queda pendiente.

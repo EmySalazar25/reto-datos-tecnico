@@ -44,6 +44,7 @@ macOS y Linux, con la guarda del ADR 0006.
 | Imagen base | `python:3.12-slim-bookworm`, fijada por digest. Su índice es multiplataforma: Docker elige la variante nativa de la máquina (amd64 o arm64), nunca una emulada |
 | Dependencias | `requirements.lock`, generado desde `requirements.txt` con `uv pip compile --universal --python-version 3.12 --generate-hashes --only-binary :all:`: las 59 dependencias, directas e indirectas, con versión y hash. Se instala con `--require-hashes --only-binary=:all:`, nunca compilando desde fuente. `requirements.txt` sigue siendo la fuente de versiones; `make lock` regenera el lock |
 | Agente | opencode 1.19.4 dentro de la imagen, descargado del release oficial y verificado por sha256 para cada arquitectura. El agente, `dp` y `duckdb` comparten arquitectura por construcción: el caso del ADR 0006 no puede ocurrir |
+| Credencial del agente | `gh` 2.102.0 en la imagen (sha256 por arquitectura), sin credenciales. El contenedor solo recibe `DP_AGENTE_GH_TOKEN` como `GH_TOKEN`; el `GH_TOKEN` de la máquina nunca entra. git usa ese token para empujar por https, también si el repo se clonó por ssh |
 | Comando | `docker compose run --rm dp make <objetivo>`, igual en PowerShell, cmd, macOS y Linux. Con `make` en la máquina, `make docker-<objetivo>` |
 | Repositorio | Se monta en `/workspace` y `dp` se instala como paquete editable: corre el código del árbol de trabajo, así que una corrección (de la persona o del agente) aplica sin reconstruir la imagen |
 | Base de datos | En un volumen de Docker (`/datos/deacero.duckdb`), no en la carpeta montada: en Windows y macOS ese disco compartido es lento y el bloqueo de archivos de DuckDB no es confiable ahí. `make docker-exportar` la copia a `./deacero.duckdb` |
@@ -75,11 +76,12 @@ del contenedor, revisadas:
   imagen ocupa unos 880 MB.
 - El contenedor usa Python 3.12; el CI sigue probando la instalación nativa con 3.9, el mínimo
   que pide el reto, y con 3.13.
-- El agente dentro del contenedor no tiene las credenciales de GitHub ni de git de la máquina:
-  diagnostica, corrige y recertifica, pero no puede hacer push ni abrir PRs; eso lo hace la
-  persona. La frontera humana ([ADR 0002](0002-frontera-humana.md)) no depende de esto, pero se
-  refuerza. Su configuración y sus sesiones no persisten entre corridas; una llave propia se pasa
-  con `-e`.
+- El agente dentro del contenedor no ve la sesión de `gh` ni las credenciales de git de la
+  máquina. Sin token diagnostica, corrige y recertifica, y el push y el PR los hace la persona.
+  Con el token de alcance mínimo (Contents y Pull requests) empuja su rama y abre el PR, pero no
+  puede aprobar environments, administrar, disparar workflows ni modificar el CI
+  (`scripts/verificar-credencial-agente.sh`; límites en el [ADR 0002](0002-frontera-humana.md)).
+  Su configuración y sus sesiones no persisten entre corridas; una llave del LLM se pasa con `-e`.
 - **Windows no se puede probar en el CI:** los runners de Windows de GitHub solo corren
   contenedores Windows. La cobertura es por construcción: el contenedor es el mismo Linux que el
   CI prueba en x86_64; un clon con la conversión de finales de línea de Windows
