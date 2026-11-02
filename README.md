@@ -175,6 +175,23 @@ de leer artifacts completos.
 | 4. Fuente y requerimiento nuevos | `dp new-source` genera la fuente y el staging estándar desde el CSV; la skill `nueva-fuente-a-mart` guía capas, reglas como tests y certificación. La ficha de certificación es la checklist. Probado con una fuente de otro dominio | [`tests/test_scaffold.py`](tests/test_scaffold.py), [`tests/test_certify.py`](tests/test_certify.py) |
 | 5. Algo destructivo sin aprobación | El agente no tiene cómo: `dp build --full-refresh` se niega siempre (solo `dp execute-proposal` lo ejecuta, en el job aprobado), los permisos del agente lo bloquean y la operación solo existe en un workflow que espera a un revisor. El agente usa `dp propose`: una propuesta sellada con clasificación y recomendación deterministas; lo que se ejecuta es exactamente lo aprobado | [Operaciones destructivas](#operaciones-destructivas-decisión-humana-informada) |
 
+### Evidencia en GitHub
+
+Todo se puede revisar en el repositorio; ningún enlace expone credenciales.
+
+| Evidencia | Qué demuestra |
+|---|---|
+| PR [#1](https://github.com/EmySalazar25/reto-datos-tecnico/pull/1) | La aprobación queda ligada a la huella del cambio: el mismo cambio no se aprueba dos veces y uno distinto vuelve a pedirla |
+| PR [#2](https://github.com/EmySalazar25/reto-datos-tecnico/pull/2) | Decisión humana informada: propuesta sellada, recomendación determinista, falla cerrado |
+| PRs [#3](https://github.com/EmySalazar25/reto-datos-tecnico/pull/3), [#4](https://github.com/EmySalazar25/reto-datos-tecnico/pull/4), [#5](https://github.com/EmySalazar25/reto-datos-tecnico/pull/5) | Certificación desactualizada detectada, chaos que siempre restaura y pruebas de valor posible (chaos 15/15) |
+| PR [#6](https://github.com/EmySalazar25/reto-datos-tecnico/pull/6) | Entorno reproducible en cualquier máquina (contenedor x86_64 y arm64 en CI) |
+| PR [#7](https://github.com/EmySalazar25/reto-datos-tecnico/pull/7), corrida [41372311038](https://github.com/EmySalazar25/reto-datos-tecnico/actions/runs/41372311038) | Gobernanza independiente del agente. GOV-07 marcó 6 cambios gobernados (huella `sha256:2dfa7ac7…`) y esperó la aprobación humana |
+| Corrida de `main` [41373480948](https://github.com/EmySalazar25/reto-datos-tecnico/actions/runs/41373480948) | `main` heredó la aprobación del PR #7 por la misma huella, certificó ambos productos y publicó |
+| Credencial mínima del agente | Token de grano fino con Metadata, Contents y Pull requests. `scripts/verificar-credencial-agente.sh` y sondas de solo lectura: aprobar environments, disparar workflows, administrar, protección, secrets y CI → **403** |
+| Demo A, corrida [41376747512](https://github.com/EmySalazar25/reto-datos-tecnico/actions/runs/41376747512) | Propuesta REJECT (R5), una persona rechaza y `ejecutar` corre **0 pasos**: sin decisión humana no hay operación destructiva |
+| Demo B, corrida [41476790758](https://github.com/EmySalazar25/reto-datos-tecnico/actions/runs/41476790758) | Incidente simulado (INC-01), propuesta APPROVE (R4), una persona aprueba y se ejecuta **solo** la propuesta sellada (`sha256` revisado = ejecutado), que recertifica y publica CERTIFIED + INTACT |
+| MCP mínimo ([MCP](#mcp-capacidades-no-autoridad)) | El agente gana capacidades por un protocolo estándar sin ganar autoridad; probado con opencode y Claude Code |
+
 ---
 
 ## Arquitectura
@@ -408,6 +425,84 @@ un repositorio público o un plan de pago.
 
 ---
 
+## MCP: capacidades, no autoridad
+
+Un servidor MCP pequeño ([`src/dp/mcp.py`](src/dp/mcp.py)) le da a cualquier agente compatible tres
+capacidades del estándar con salida estructurada. **El cliente y el modelo son intercambiables; la
+autoridad no.**
+
+```
+OpenCode / Claude Code / otro cliente MCP
+        │  protocolo MCP estándar (JSON-RPC 2.0 por stdio)
+        ▼
+servidor `dp`: 3 capacidades explícitas, argumentos validados
+        │  subproceso de `dp` con argumentos fijos, sin shell y sin credenciales
+        ▼
+dp → controles deterministas (certificación, GOV-07, propuesta sellada)
+        ▼
+GitHub (CI, environments, aprobación humana) / dbt
+```
+
+| Herramienta | Tipo | Propósito | Sistema que toca | ¿Modifica estado? | Aprobación |
+|---|---|---|---|---|---|
+| `pipeline_status` | READ | Estado de certificación de cada producto y si sigue vigente | `dp certify status` y `.certification/` | No | No |
+| `diagnose` | READ | Qué falló: nodo, regla, filas de muestra y mecanismos conocidos | `dp diagnose --json` | No | No |
+| `propose_destructive_operation` | REQUEST | Propuesta sellada (sha256) con clasificación, riesgo y recomendación deterministas | `dp propose` | Solo escribe la propuesta en `.evidence/` | Ejecutarla exige que una persona la solicite y la apruebe en `produccion-destructiva`. La herramienta devuelve `ejecutado: false` y cómo solicitarla |
+
+**Seguridad.** El MCP amplía capacidades, no autoridad:
+
+| Capa | Qué es | ¿Es un control? |
+|---|---|---|
+| Guardrails del cliente | `opencode.json`, permisos de Claude Code o Cursor, `AGENTS.md`, `CLAUDE.md` | No: orientan y frenan errores |
+| Controles deterministas | El servidor solo expone 3 capacidades, sin shell, SQL, dbt, git ni GitHub, y valida cada argumento. `dp` rechaza el full-refresh directo. GOV-07. Propuesta sellada | Sí |
+| Permisos externos | El servidor no usa credenciales de GitHub y se las quita a `dp`. El agente del contenedor tiene un token mínimo | Sí |
+| Aprobación humana | Environments de GitHub | Sí |
+
+Las pruebas ([`tests/test_mcp.py`](tests/test_mcp.py)) lo verifican sobre el código y el protocolo, no
+sobre lo que decida un modelo:
+- `tools/list` devuelve exactamente 3 herramientas;
+- una entrada inválida o una herramienta inexistente falla sin llamar a `dp`;
+- un motivo con forma de opción (`--simular-incidente=INC-01`) no puede activar otra opción de `dp`;
+- el servidor solo puede pedirle a `dp` estado, diagnóstico y propuesta;
+- el módulo no tiene red, shell ni credenciales.
+
+`src/dp/mcp.py`, `.mcp.json` y `opencode.json` son rutas protegidas: agregar una capacidad pasa por
+GOV-07.
+
+**Portabilidad.** Es el protocolo MCP estándar (versiones `2025-11-25` a `2024-11-05`) con la
+biblioteca estándar de Python, así que corre en 3.9 como el resto del estándar. Solo cambia un
+archivo de configuración por cliente; todos lanzan `.venv/bin/python -m dp.mcp`:
+
+| Cliente | Configuración | Verificado |
+|---|---|---|
+| OpenCode | `mcp.dp` en [`opencode.json`](opencode.json) | 1.19.4, en el contenedor y sin credenciales de GitHub: conectó y el agente llamó las 3 herramientas |
+| Claude Code | [`.mcp.json`](.mcp.json). Pide aprobar el servidor del proyecto la primera vez; `claude -p` lo carga solo | 2.1.276: conectó, descubrió las mismas 3 herramientas y llamó `pipeline_status` |
+| Cursor | `.cursor/mcp.json` con el mismo `mcpServers` y `${workspaceFolder}/.venv/bin/python` | No probado |
+
+OpenCode no forma parte del contrato de seguridad. Si el MCP no arranca, el cliente sigue sin esas
+herramientas y el agente usa la CLI `dp`, con las mismas reglas, el mismo CI y la misma aprobación.
+En Windows, el MCP corre dentro del contenedor (`docker compose run --rm dp opencode`).
+
+La propuesta que devuelve el MCP es exactamente la que `dp` selló en esa invocación: el servidor
+elige su directorio de salida y no lee la salida de texto de `dp`, que incluye el motivo. La
+solicitud humana va como datos y pasos para el formulario de GitHub, nunca como un comando de shell.
+El comando que imprime `dp propose` escapa cada valor con `shlex.quote`.
+
+**Limitaciones.**
+- El agente y la persona comparten la identidad de GitHub; una identidad propia queda como P2.
+- El almacén es DuckDB local; BigQuery y la nube quedan como P3.
+
+**Riesgos residuales (hardening posterior).** Encontrados en el review adversarial del MCP; ninguno da
+autoridad nueva frente a la CLI:
+
+| Riesgo | Clasificación | Mitigación propuesta |
+|---|---|---|
+| `dp diagnose` (y `dp certify explain`) ejecuta el SQL compilado que lee de `.evidence/`, que es escribible. DuckDB en solo lectura todavía permite varias sentencias, `COPY … TO` (escribir archivos) y `read_text` (leer archivos locales). Es preexistente en `dp` y alcanzable por `diagnose`, igual que por la CLI | MEDIUM | Abrir DuckDB con `enable_external_access=false` y ejecutar una sola sentencia; idealmente, tomar el SQL de los artifacts de dbt de la corrida y no de evidencia editable |
+| `python -m dp.entrada` (y `-m dp.mcp`) con el directorio de trabajo en la raíz del repo: un paquete `dp/` en la raíz sombrearía al `dp` instalado | LOW | Lanzar con `python -I` (modo aislado), ya probado: ejecuta el `dp` instalado |
+| Un mensaje JSON-RPC con `params` o `name` de tipo inesperado provoca una excepción y termina el servidor. Falla cerrado: no se ejecuta nada | LOW | Validar la estructura de `params` y `name`, y responder `-32603` ante cualquier excepción sin terminar el proceso |
+
+---
+
 ## El caso de ejemplo: Logística
 
 [Requerimiento](docs/reto/requerimiento-negocio.md) · [Contrato](docs/reto/contrato-marts.md)
@@ -469,7 +564,8 @@ Se recortó alcance para que lo entregado funcione completo. Detalle y prioridad
 | Costo de consumo, regresión de performance y BigQuery real | P2. Requieren BigQuery y Looker reales; en local se reportan como `not_available` en lugar de simularse |
 | Plataforma completa en la instalación nativa: locks con hashes, `dp doctor`, *preflight* de `make setup` y CI en macOS | P1, propuesto en el [ADR 0006](docs/adr/0006-plataforma-de-ejecucion.md). El camino recomendado, el contenedor ([ADR 0008](docs/adr/0008-contenedor-reproducible.md)), ya tiene lock con hashes y CI en x86_64 y arm64; la instalación nativa tiene la guarda mínima: huella del entorno, código 4 con mecanismo y una demo de chaos que siempre se recupera |
 | Prueba en Windows dentro del CI | Los runners de Windows de GitHub solo corren contenedores Windows. Windows usa el mismo contenedor Linux que se prueba en x86_64, con finales de línea fijados por `.gitattributes` |
-| Contrato de máquina de `dp` (`--json` con sobre, códigos 0–5, `capacidades`, esquemas), servidor MCP y entrada para una persona junior (primeros pasos, glosario, tutorial) | P1, propuesto en el [ADR 0007](docs/adr/0007-como-se-consume-el-agente.md). Hoy la CLI ya expone todas las herramientas al agente y la frontera humana vale para cualquier cliente |
+| Contrato de máquina completo de `dp` (`--json` con sobre, códigos 0–5, `capacidades`, esquemas), más capacidades MCP (construir, nueva fuente) y entrada para una persona junior (primeros pasos, glosario, tutorial) | P1, propuesto en el [ADR 0007](docs/adr/0007-como-se-consume-el-agente.md). En esta entrega va el [MCP mínimo](#mcp-capacidades-no-autoridad) con 3 capacidades; el resto de la CLI la usa el agente por terminal, con la misma frontera |
+| Producción en la nube: BigQuery, Cloud Run, Artifact Registry, cuentas de servicio e IAM, Secret Manager, ambientes dev/stage/prod, observabilidad y FinOps | P3. El estándar ya está diseñado para BigQuery (target, partición, clustering y costo por job en `PROPUESTA.md`); la frontera humana y GOV-07 no cambian |
 | Monitoreo programado | P1. El workflow existe para PR y `main`; una corrida con cron es directa cuando haya entregas reales |
 | Identidad propia del agente en GitHub | P2. Hoy, en el contenedor, el agente recibe un token de grano fino de la misma cuenta, sin permiso para aprobar, administrar, disparar workflows ni tocar el CI. Una identidad propia (GitHub App) permitiría `prevent_self_review: true` y exigir la revisión del PR |
 | Gobernar las pruebas de las herramientas (`tests/`) | P1. Un PR puede cambiar o borrar pruebas de `dp` sin aprobación; los tests de dbt sí están gobernados (GOV-07). Gobernar todo `tests/` convertiría cada ajuste normal de pruebas en una aprobación; el siguiente paso es gobernar solo el borrado de pruebas |
@@ -494,7 +590,8 @@ Se recortó alcance para que lo entregado funcione completo. Detalle y prioridad
 
 | Ruta | Contenido |
 |---|---|
-| [`AGENTS.md`](AGENTS.md), [`.agents/skills/`](.agents/skills), [`opencode.json`](opencode.json) | Contexto, recetas y permisos del agente |
+| [`AGENTS.md`](AGENTS.md), [`.agents/skills/`](.agents/skills), [`opencode.json`](opencode.json), [`CLAUDE.md`](CLAUDE.md) | Contexto, recetas y permisos del agente |
+| [`src/dp/mcp.py`](src/dp/mcp.py), [`.mcp.json`](.mcp.json) | Servidor MCP con 3 capacidades y su configuración para Claude Code (la de OpenCode está en `opencode.json`) |
 | [`data/replica/`](data/replica) | Entregas de la réplica CDC (datos ficticios del reto) |
 | [`docs/reto/`](docs/reto) | Requerimiento, diccionario, contrato y convenciones del reto |
 | [`docs/adr/`](docs/adr) | Decisiones de arquitectura |

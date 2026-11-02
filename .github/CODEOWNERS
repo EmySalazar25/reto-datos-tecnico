@@ -10,6 +10,8 @@
 # propose.py genera la evidencia de cada propuesta.
 /src/dp/cli.py      @EmySalazar25
 /src/dp/propose.py  @EmySalazar25
+# Las capacidades que el servidor MCP expone a cualquier agente: ampliarlas es un cambio gobernado.
+/src/dp/mcp.py      @EmySalazar25
 
 # Contexto y configuración de cada agente: cualquier cliente, no solo opencode.
 /AGENTS.md          @EmySalazar25

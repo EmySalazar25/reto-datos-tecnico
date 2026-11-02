@@ -26,6 +26,10 @@ sin la salida de una herramienta que lo demuestre.
 Invoca la CLI como `.venv/bin/dp` (o `dp` si el entorno virtual está activado). Si `.venv` no
 existe, corre `make setup`. Para leer archivos usa comandos simples (`cat`, `sed -n`, `grep`).
 
+Si tu cliente tiene el servidor MCP `dp`, úsalo para el estado (`pipeline_status`), el diagnóstico
+(`diagnose`) y las propuestas destructivas (`propose_destructive_operation`): es la misma CLI con
+salida estructurada. Proponer nunca ejecuta; la solicitud y la aprobación son de una persona.
+
 | Comando | Para qué |
 |---|---|
 | `make setup` | Entorno con dependencias fijadas |
