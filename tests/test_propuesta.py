@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import copy
 import json
+import shlex
+import subprocess
 from pathlib import Path
 
 import duckdb
@@ -272,6 +274,31 @@ def test_full_refresh_directo_siempre_se_rechaza(monkeypatch, construcciones, va
     assert cli.main(["build", "--full-refresh"]) == 2
     assert cli.main(["build", "--full-refresh", "--select", "embarques_mensual"]) == 2
     assert construcciones == []
+
+
+# --- El comando de solicitud que una persona puede pegar en su terminal ------------------------
+
+PAYLOAD_REVIEW = 'reporte $(id) `whoami` "; touch /tmp/pwned; echo "'
+
+
+def test_high2_el_comando_de_solicitud_escapa_el_motivo():
+    """Payload exacto del review: con el escape, la shell lo lee como un solo valor de `-f`."""
+    comando = propose.request_command(propuesta(motivo=PAYLOAD_REVIEW))
+    assert shlex.split(comando) == ["gh", "workflow", "run", "destructivo.yml",
+                                    "-f", "operacion=full-refresh", "-f", "producto=todos",
+                                    "-f", f"motivo={PAYLOAD_REVIEW}"]
+
+
+def test_high2_pegar_el_comando_en_una_shell_no_ejecuta_nada_mas(tmp_path):
+    marca = tmp_path / "pwned"
+    payload = f'reporte $(touch {marca}1) `touch {marca}2` "; touch {marca}3; echo "'
+    comando = propose.request_command(propuesta(motivo=payload))
+    # `gh` falso: imprime sus argumentos. Si el motivo escapara del comando, se crearían las marcas.
+    script = 'gh() { printf "%s\\n" "$@"; }\n' + comando + "\n"
+    salida = subprocess.run(["/bin/sh", "-c", script], cwd=tmp_path, capture_output=True, text=True, check=True).stdout
+    assert salida.splitlines() == ["workflow", "run", "destructivo.yml", "-f", "operacion=full-refresh",
+                                   "-f", "producto=todos", "-f", f"motivo={payload}"]
+    assert not list(tmp_path.glob("pwned*"))
 
 
 def test_build_normal_nunca_pide_full_refresh(construcciones):

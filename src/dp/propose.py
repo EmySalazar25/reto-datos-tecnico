@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -170,8 +171,10 @@ def render(p: dict) -> str:
 def request_command(p: dict) -> str | None:
     if p["operacion"] == "cambio-contrato":
         return None
-    return (f'gh workflow run destructivo.yml -f operacion={p["operacion"]} -f producto={p["producto"]} '
-            f'-f motivo="{p["motivo"]}"')
+    # Una persona puede pegar este comando en su terminal: cada valor va escapado, así que el motivo
+    # (texto libre) nunca se convierte en otro comando.
+    campos = (("operacion", p["operacion"]), ("producto", p["producto"]), ("motivo", p["motivo"]))
+    return "gh workflow run destructivo.yml " + " ".join(f"-f {shlex.quote(f'{k}={v}')}" for k, v in campos)
 
 
 def save(p: dict, out_dir: Path) -> Path:
