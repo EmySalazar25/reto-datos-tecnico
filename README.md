@@ -483,9 +483,23 @@ OpenCode no forma parte del contrato de seguridad. Si el MCP no arranca, el clie
 herramientas y el agente usa la CLI `dp`, con las mismas reglas, el mismo CI y la misma aprobación.
 En Windows, el MCP corre dentro del contenedor (`docker compose run --rm dp opencode`).
 
+La propuesta que devuelve el MCP es exactamente la que `dp` selló en esa invocación: el servidor
+elige su directorio de salida y no lee la salida de texto de `dp`, que incluye el motivo. La
+solicitud humana va como datos y pasos para el formulario de GitHub, nunca como un comando de shell.
+El comando que imprime `dp propose` escapa cada valor con `shlex.quote`.
+
 **Limitaciones.**
 - El agente y la persona comparten la identidad de GitHub; una identidad propia queda como P2.
 - El almacén es DuckDB local; BigQuery y la nube quedan como P3.
+
+**Riesgos residuales (hardening posterior).** Encontrados en el review adversarial del MCP; ninguno da
+autoridad nueva frente a la CLI:
+
+| Riesgo | Clasificación | Mitigación propuesta |
+|---|---|---|
+| `dp diagnose` (y `dp certify explain`) ejecuta el SQL compilado que lee de `.evidence/`, que es escribible. DuckDB en solo lectura todavía permite varias sentencias, `COPY … TO` (escribir archivos) y `read_text` (leer archivos locales). Es preexistente en `dp` y alcanzable por `diagnose`, igual que por la CLI | MEDIUM | Abrir DuckDB con `enable_external_access=false` y ejecutar una sola sentencia; idealmente, tomar el SQL de los artifacts de dbt de la corrida y no de evidencia editable |
+| `python -m dp.entrada` (y `-m dp.mcp`) con el directorio de trabajo en la raíz del repo: un paquete `dp/` en la raíz sombrearía al `dp` instalado | LOW | Lanzar con `python -I` (modo aislado), ya probado: ejecuta el `dp` instalado |
+| Un mensaje JSON-RPC con `params` o `name` de tipo inesperado provoca una excepción y termina el servidor. Falla cerrado: no se ejecuta nada | LOW | Validar la estructura de `params` y `name`, y responder `-32603` ante cualquier excepción sin terminar el proceso |
 
 ---
 

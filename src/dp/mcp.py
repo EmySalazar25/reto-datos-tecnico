@@ -21,6 +21,7 @@ import os
 import re
 import subprocess
 import sys
+import uuid
 
 from dp import paths
 
@@ -138,21 +139,41 @@ def diagnose(_args: dict) -> tuple:
         return {"error": (err or out).strip()[:2000]}, True
 
 
+def _solicitud_humana(p: dict) -> dict:
+    """Cómo pide una persona la operación: datos y pasos, nunca un comando de shell con texto del agente."""
+    if p["operacion"] == "cambio-contrato":
+        pasos = ["Un cambio de contrato no va por el workflow `destructivo`: va por PR, subiendo `meta.contract_version`.",
+                 "GOV-07 lo marca como cambio gobernado y espera la aprobación de una persona en `aprobacion-estandar`."]
+    else:
+        pasos = ["En GitHub: Actions → workflow `destructivo` → Run workflow, sobre la rama `main`.",
+                 "Captura en el formulario los valores de `entradas`.",
+                 "En el resumen del job `plan`, revisa el Proposal ID, el SHA256, la clasificación y la recomendación "
+                 "que sella GitHub: esa es la propuesta que se aprueba.",
+                 "Aprueba o rechaza en el environment `produccion-destructiva`. Sin aprobación no se ejecuta nada."]
+    return {
+        "quien": "una persona; esta capacidad no puede solicitarla, aprobarla ni ejecutarla",
+        "proposal_id": p["proposal_id"],
+        "sha256": p.get("sha256"),
+        # Datos para el formulario de GitHub, no para una shell: el motivo es texto del agente.
+        "entradas": {"operacion": p["operacion"], "producto": p["producto"], "motivo": p["motivo"],
+                     "simular_incidente": "ninguno"},
+        "pasos": pasos,
+    }
+
+
 def propose_destructive_operation(args: dict) -> tuple:
+    # El servidor elige el directorio de esta invocación: lee exactamente la propuesta que `dp` acaba
+    # de sellar ahí, sin buscarla en una salida que incluye texto del agente (el motivo).
+    salida = PROPUESTAS_DIR / f"mcp-{uuid.uuid4().hex}"
     # `--opcion=valor`: un motivo que empiece con "--" sigue siendo el valor, nunca otra opción.
-    argv = ["propose", args["operacion"], f"--motivo={args['motivo']}"]
+    argv = ["propose", args["operacion"], f"--motivo={args['motivo']}", f"--salida={salida}"]
     if "producto" in args:
         argv.append(f"--producto={args['producto']}")
     code, out, err = ejecutar_dp(*argv)
-    guardada = re.search(r"^propuesta guardada en (.+)$", out, re.MULTILINE)
-    if code != 0 or not guardada:
+    archivo = salida / "propuesta.json"
+    if code != 0 or not archivo.is_file():
         return {"error": (out + err).strip()[-2000:]}, True
-    archivo = os.path.realpath(guardada.group(1).strip())
-    if os.path.commonpath([archivo, os.path.realpath(PROPUESTAS_DIR)]) != os.path.realpath(PROPUESTAS_DIR):
-        return {"error": "la propuesta no quedó en el directorio de evidencia"}, True
-    with open(archivo, encoding="utf-8") as fh:
-        p = json.load(fh)
-    solicitud = re.search(r"^\s+(gh workflow run destructivo\.yml .+)$", out, re.MULTILINE)
+    p = json.loads(archivo.read_text(encoding="utf-8"))
     return {
         "proposal_id": p["proposal_id"],
         "sha256": p["sha256"],
@@ -167,13 +188,7 @@ def propose_destructive_operation(args: dict) -> tuple:
         "impacto": p["impacto"],
         "estado": "PENDIENTE DE DECISIÓN HUMANA",
         "ejecutado": False,
-        "solicitud_humana": {
-            "quien": "una persona; esta capacidad no puede solicitarla ni ejecutarla",
-            "donde": "GitHub → Actions → destructivo → Run workflow (rama main), environment produccion-destructiva",
-            "comando": solicitud.group(1) if solicitud else None,
-            "nota": "La propuesta que se aprueba es la que sella el job `plan` en GitHub; un cambio de contrato "
-                    "va por PR y GOV-07.",
-        },
+        "solicitud_humana": _solicitud_humana(p),
         "archivo": os.path.relpath(archivo, paths.ROOT),
     }, False
 
