@@ -19,3 +19,7 @@
 /Dockerfile         @EmySalazar25
 /compose.yaml       @EmySalazar25
 /docker/            @EmySalazar25
+
+# Lo que configura la frontera humana en GitHub y lo que mide la credencial del agente.
+/scripts/configurar-github.sh             @EmySalazar25
+/scripts/verificar-credencial-agente.sh   @EmySalazar25
