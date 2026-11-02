@@ -200,8 +200,11 @@ def certify(
     if base_graph is not None and changed_files is not None and changed_files.exists():
         codeowners = base_codeowners.read_text(encoding="utf-8") if base_codeowners and base_codeowners.exists() else ""
         policy_change = cambios.policy_change(base_policy, policy_path)
-        global_changes = ([policy_change] if policy_change else []) + cambios.protected_changes(
-            changed_files.read_bytes(), codeowners
+        diff = changed_files.read_bytes()
+        global_changes = (
+            ([policy_change] if policy_change else [])
+            + cambios.protected_changes(diff, codeowners)
+            + cambios.replica_changes(diff)
         )
         governed = cambios.unique_sorted(
             [c for p in graph.products() for c in cambios.product_changes(graph, base_graph, p)] + global_changes

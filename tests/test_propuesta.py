@@ -262,9 +262,21 @@ def test_cli_no_ejecuta_sin_aprobacion(tmp_path, construcciones):
     assert construcciones == []
 
 
-def test_full_refresh_directo_sigue_bloqueado(monkeypatch):
-    monkeypatch.delenv("DP_OPERACION_APROBADA", raising=False)
+@pytest.mark.parametrize("variable", [None, "1", "true", "aprobada"])
+def test_full_refresh_directo_siempre_se_rechaza(monkeypatch, construcciones, variable):
+    """Ninguna variable de entorno abre `dp build --full-refresh`: la única ruta es execute-proposal."""
+    if variable is None:
+        monkeypatch.delenv("DP_OPERACION_APROBADA", raising=False)
+    else:
+        monkeypatch.setenv("DP_OPERACION_APROBADA", variable)
     assert cli.main(["build", "--full-refresh"]) == 2
+    assert cli.main(["build", "--full-refresh", "--select", "embarques_mensual"]) == 2
+    assert construcciones == []
+
+
+def test_build_normal_nunca_pide_full_refresh(construcciones):
+    assert cli.main(["build"]) == 0
+    assert construcciones == [(None, False)]
 
 
 # --- Presentación ----------------------------------------------------------------------------

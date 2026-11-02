@@ -49,6 +49,9 @@ crear_environment produccion-destructiva "full-refresh y recreación de tablas p
 # Sin revisión obligatoria de PR por otra persona: con una sola mantenedora nadie podría aprobar.
 # Lo que CODEOWNERS protege lo hace cumplir GOV-07 (rutas protegidas) con la aprobación en el
 # environment, y el check `aprobacion` bloquea el merge mientras espera.
+# enforce_admins=true: la protección también vale para administradores. Sin esto, cualquier
+# credencial de una persona admin (también la que use un agente) puede empujar directo a main
+# o fusionar con `--admin` sin los checks.
 echo "- protección de la rama main"
 gh api -X PUT "repos/$REPO/branches/main/protection" --input - <<'JSON' >/dev/null
 {
@@ -56,7 +59,7 @@ gh api -X PUT "repos/$REPO/branches/main/protection" --input - <<'JSON' >/dev/nu
     "strict": false,
     "contexts": ["herramientas (3.9)", "herramientas (3.13)", "secretos", "certificacion", "aprobacion"]
   },
-  "enforce_admins": false,
+  "enforce_admins": true,
   "required_pull_request_reviews": null,
   "restrictions": null,
   "allow_force_pushes": false,
@@ -64,6 +67,15 @@ gh api -X PUT "repos/$REPO/branches/main/protection" --input - <<'JSON' >/dev/nu
 }
 JSON
 
+# Lo que importa es lo que GitHub aplicó, no lo que este script pidió.
 echo
-echo "Listo. Verifica en Settings → Environments y Settings → Branches."
+echo "Estado aplicado en GitHub:"
+gh api "repos/$REPO/branches/main/protection" --jq \
+  '"  main: enforce_admins=\(.enforce_admins.enabled) · force_push=\(.allow_force_pushes.enabled) · borrar=\(.allow_deletions.enabled) · checks=\(.required_status_checks.contexts | join(", "))"'
+for nombre in aprobacion-estandar produccion-destructiva; do
+  gh api "repos/$REPO/environments/$nombre" --jq \
+    '"  \(.name): revisores=\([.protection_rules[] | select(.type=="required_reviewers") | .reviewers[].reviewer.login] | join(",")) · prevent_self_review=\([.protection_rules[] | select(.type=="required_reviewers") | .prevent_self_review][0]) · ramas=\(.deployment_branch_policy // "cualquiera" | tostring)"'
+done
+
+echo
 echo "En un fork, actualiza .github/CODEOWNERS: además de dueños, define las rutas protegidas de GOV-07."

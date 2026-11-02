@@ -32,6 +32,29 @@ RUN set -eu; \
     tar -xzf /tmp/opencode.tar.gz -C /usr/local/bin opencode; \
     rm /tmp/opencode.tar.gz
 
+# gh, para que el agente abra el PR con el fix. La imagen no trae credenciales: el agente solo
+# recibe un token de alcance mínimo si la persona se lo pasa al correr (DP_AGENTE_GH_TOKEN en
+# compose.yaml). git usa ese mismo token para empujar por https, también si el repo se clonó por ssh.
+ARG GH_VERSION=2.102.0
+ARG GH_SHA256_AMD64=bb766f710eef8ede859c18578c72c327597cd4c8a85b06001b1f3843c6019386
+ARG GH_SHA256_ARM64=7862c86c72f43df3a2d93ddde6f473285b4e2af61b494849846827e513ef6484
+RUN set -eu; \
+    arch="${TARGETARCH:-$(dpkg --print-architecture)}"; \
+    case "$arch" in \
+        amd64) sha="$GH_SHA256_AMD64" ;; \
+        arm64) sha="$GH_SHA256_ARM64" ;; \
+        *) echo "arquitectura no soportada: $arch (se soportan amd64 y arm64)" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/gh.tar.gz \
+        "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${arch}.tar.gz"; \
+    echo "${sha}  /tmp/gh.tar.gz" | sha256sum -c -; \
+    tar -xzf /tmp/gh.tar.gz -C /tmp; \
+    install -m 0755 "/tmp/gh_${GH_VERSION}_linux_${arch}/bin/gh" /usr/local/bin/gh; \
+    rm -rf /tmp/gh.tar.gz "/tmp/gh_${GH_VERSION}_linux_${arch}"; \
+    git config --system credential.https://github.com.helper '!/usr/local/bin/gh auth git-credential'; \
+    git config --system url.https://github.com/.insteadOf git@github.com:; \
+    git config --system --add url.https://github.com/.insteadOf ssh://git@github.com/
+
 # Dependencias exactas: lock con hashes y solo ruedas, nunca compiladas desde fuente.
 ENV VIRTUAL_ENV=/opt/venv \
     PATH=/opt/venv/bin:$PATH \

@@ -93,6 +93,7 @@ Las tablas quedan en el esquema `mart_logistica` de `deacero.duckdb`, como pide 
 | Modelo validado | `opencode/deepseek-v4.1-flash-free`: modelo gratuito de opencode, **sin llave ni tarjeta** |
 | Con su propia llave | Cualquier proveedor gratuito vía variable de entorno, p. ej. `GOOGLE_GENERATIVE_AI_API_KEY` y `--model google/gemini-2.5-flash`. Nunca en el repo |
 | Configuración | [`opencode.json`](opencode.json) (modelo y permisos), [`AGENTS.md`](AGENTS.md) (contexto), [`.agents/skills/`](.agents/skills) (recetas) |
+| Otros agentes | Claude Code y Cursor leen el mismo [`AGENTS.md`](AGENTS.md) (Claude Code a través de [`CLAUDE.md`](CLAUDE.md), que solo lo importa) y usan la misma CLI `dp`. Los permisos de `opencode.json` son guardrails de opencode; las garantías no dependen del cliente ([Guardrails y controles](#guardrails-y-controles-el-agente-puede-cambiar-las-garantías-no)) |
 
 ```bash
 opencode                                          # desde la raíz del repo (ahí están AGENTS.md y opencode.json)
@@ -108,8 +109,25 @@ docker compose run --rm -e GOOGLE_GENERATIVE_AI_API_KEY dp opencode --model goog
 docker compose run --rm -e GOOGLE_GENERATIVE_AI_API_KEY -e DP_AGENTE_MODELO=google/gemini-2.5-flash dp make chaos
 ```
 
-Dentro del contenedor el agente no tiene tus credenciales de GitHub: diagnostica, corrige y
-recertifica, pero el push y el PR los haces tú desde tu máquina.
+**Credencial del agente para abrir el PR.** El contenedor nunca ve tu sesión de `gh` ni tu
+`GH_TOKEN`. Para que el agente empuje su rama y abra el PR con el fix, dale un token propio de
+alcance mínimo:
+
+1. En GitHub: *Settings → Developer settings → Fine-grained tokens → Generate new token*. Solo
+   este repositorio (o tu fork), expiración corta, y únicamente **Contents: Read and write** y
+   **Pull requests: Read and write** (Metadata se agrega solo). Nada de Administration,
+   Deployments, Actions de escritura ni Workflows.
+2. Pásalo sin que quede en el historial ni en el repo:
+   `read -rs DP_AGENTE_GH_TOKEN && export DP_AGENTE_GH_TOKEN` (en PowerShell 7:
+   `$env:DP_AGENTE_GH_TOKEN = Read-Host -MaskInput "token"`).
+3. Verifica qué puede y qué no: `docker compose run --rm dp scripts/verificar-credencial-agente.sh`.
+   Debe poder empujar ramas y abrir PRs, y **no** poder aprobar environments, administrar la
+   protección, disparar workflows ni modificar el CI.
+
+Si tu identidad de git solo está en tu configuración global, defínela en el repo
+(`git config user.name …` y `git config user.email …`): el contenedor ve `.git/config`, no tu
+`~/.gitconfig`. Sin token, el agente diagnostica, corrige y recertifica, y el push y el PR los
+haces tú.
 
 Los modelos gratuitos de opencode rotan: `opencode models opencode` lista los vigentes y
 cualquiera funciona con `--model`.
@@ -155,7 +173,7 @@ de leer artifacts completos.
 | 2. Entregas nuevas de la réplica | Copia la carpeta en `data/replica/carga_N/` y corre `make all`. Reenvíos, archivos modificados, tablas no declaradas, columnas faltantes o nuevas, borrados y correcciones con el mismo timestamp tienen un tratamiento definido | skill `ingerir-entrega`, `dp ingest` |
 | 3. Su propio chaos | El agente empieza por `dp certify status` y `dp diagnose`: nodo que falló, regla, filas de muestra, diff del unit test (esperado vs real) y mecanismos conocidos del catálogo. Responde con **mecanismo**, no con el stack trace, y propone el fix como PR | skill `diagnosticar-falla`, [`standard/chaos/catalogo.yml`](standard/chaos/catalogo.yml) |
 | 4. Fuente y requerimiento nuevos | `dp new-source` genera la fuente y el staging estándar desde el CSV; la skill `nueva-fuente-a-mart` guía capas, reglas como tests y certificación. La ficha de certificación es la checklist. Probado con una fuente de otro dominio | [`tests/test_scaffold.py`](tests/test_scaffold.py), [`tests/test_certify.py`](tests/test_certify.py) |
-| 5. Algo destructivo sin aprobación | El agente no tiene cómo: `dp build --full-refresh` se niega fuera del job aprobado, los permisos del agente lo bloquean y la operación solo existe en un workflow que espera a un revisor. El agente usa `dp propose`: una propuesta sellada con clasificación y recomendación deterministas; lo que se ejecuta es exactamente lo aprobado | [Operaciones destructivas](#operaciones-destructivas-decisión-humana-informada) |
+| 5. Algo destructivo sin aprobación | El agente no tiene cómo: `dp build --full-refresh` se niega siempre (solo `dp execute-proposal` lo ejecuta, en el job aprobado), los permisos del agente lo bloquean y la operación solo existe en un workflow que espera a un revisor. El agente usa `dp propose`: una propuesta sellada con clasificación y recomendación deterministas; lo que se ejecuta es exactamente lo aprobado | [Operaciones destructivas](#operaciones-destructivas-decisión-humana-informada) |
 
 ---
 
@@ -255,7 +273,9 @@ necesita aprobación; lo que afecta a quien consume los productos, sí.
 | Full-refresh, borrar o recrear tablas publicadas | Workflow [`destructivo`](.github/workflows/destructivo.yml): cualquiera lo solicita; el sistema genera una propuesta sellada; el job que ejecuta espera a un revisor en el environment `produccion-destructiva`, verifica la propuesta y recertifica antes de publicar. Ver [Operaciones destructivas](#operaciones-destructivas-decisión-humana-informada) |
 | Romper el contrato de un mart (quitar o renombrar columnas, cambiar tipo o grano) | GOV-07 compara contra la versión base en CI; sin aprobación en el environment `aprobacion-estandar`, el producto no se certifica |
 | Bajar la vara: severidad `error` → `warn`, borrar un test o una regla, editar la política | GOV-07, con la misma aprobación en `aprobacion-estandar` |
-| Cambiar el motor de certificación, el CI, la política o la configuración del agente | GOV-07 lee las rutas protegidas del [`CODEOWNERS`](.github/CODEOWNERS) de la versión base; cada archivo cambiado entra con su contenido exacto |
+| Modificar o borrar una entrega de `data/replica/` | GOV-07: las entregas son de solo agregar. Una entrega nueva entra libre; modificar o borrar un archivo que ya existía es un cambio gobernado, lo haga quien lo haga |
+| Cambiar el motor de certificación, el CI, la política, la configuración de cualquier agente o el contenedor | GOV-07 lee las rutas protegidas del [`CODEOWNERS`](.github/CODEOWNERS) de la versión base; cada archivo cambiado entra con su contenido exacto |
+| Llegar a `main` | Protección de rama con los checks requeridos, también para administradores (`enforce_admins`): sin push directo ni merge con `--admin` |
 
 **La aprobación vale para un cambio exacto, no para una persona.** GOV-07 calcula una
 **huella**: el sha256 de la lista de cambios gobernados con su valor antes y después. Esa lista y
@@ -269,6 +289,28 @@ forma de producir ese registro.
 - Si el cambio se modificó después de aprobarlo, aparece otro cambio gobernado o falta cualquier
   dato (PR, corrida, aprobación, artefacto), `main` vuelve a pedir aprobación y no publica hasta
   tenerla.
+
+### Guardrails y controles: el agente puede cambiar, las garantías no
+
+Los permisos de un cliente (`opencode.json`, los de Claude Code o Cursor) y las instrucciones de
+`AGENTS.md` son **guardrails**: frenan errores temprano y explican qué no hacer, pero cada
+cliente los aplica distinto y se pueden evadir. Se conservan; ninguna garantía depende solo de
+ellos.
+
+| Garantía | Control real (igual con opencode, Claude Code, Cursor o una persona) | Guardrail adicional |
+|---|---|---|
+| Nada llega a `main` sin los checks | Protección de rama con `enforce_admins` | `opencode.json` niega `git push` a `main` y `gh pr merge` |
+| Lo destructivo sobre lo publicado espera a una persona | Workflow `destructivo` + environment `produccion-destructiva` (solo ramas protegidas) + `execute-proposal`, que falla cerrado | La skill `proponer-cambio-destructivo` |
+| `dp build --full-refresh` no corre | `dp` lo rechaza siempre | `opencode.json` lo niega |
+| Las entregas no se editan ni se borran | GOV-07 en CI (solo agregar) y la ingesta, que rechaza un archivo cambiado | `opencode.json` niega editar `data/replica/` |
+| Contratos, tests y política no se debilitan | GOV-07 ligado a la huella | Reglas 9 y 10 de `AGENTS.md` |
+| El agente no se aprueba a sí mismo | Credencial del contenedor sin Deployments ni Administration (`scripts/verificar-credencial-agente.sh`) | `opencode.json` niega `gh api`, `pending_deployments` y leer tokens |
+
+**Lo que sigue dependiendo de la credencial:** en la instalación nativa el agente corre con tu
+sesión completa de `gh`, y ahí no aprobarse ni fusionar depende de los guardrails. El token del
+contenedor es de la misma cuenta que revisa (`prevent_self_review` sigue en `false`) y puede
+fusionar un PR cuyos checks pasen; un cambio gobernado sigue esperando tu aprobación. El cierre
+de fondo es una identidad propia para el agente ([ADR 0002](docs/adr/0002-frontera-humana.md)).
 
 ### Operaciones destructivas: decisión humana informada
 
@@ -429,7 +471,8 @@ Se recortó alcance para que lo entregado funcione completo. Detalle y prioridad
 | Prueba en Windows dentro del CI | Los runners de Windows de GitHub solo corren contenedores Windows. Windows usa el mismo contenedor Linux que se prueba en x86_64, con finales de línea fijados por `.gitattributes` |
 | Contrato de máquina de `dp` (`--json` con sobre, códigos 0–5, `capacidades`, esquemas), servidor MCP y entrada para una persona junior (primeros pasos, glosario, tutorial) | P1, propuesto en el [ADR 0007](docs/adr/0007-como-se-consume-el-agente.md). Hoy la CLI ya expone todas las herramientas al agente y la frontera humana vale para cualquier cliente |
 | Monitoreo programado | P1. El workflow existe para PR y `main`; una corrida con cron es directa cuando haya entregas reales |
-| Identidad propia del agente en GitHub | Hoy el agente actúa con las credenciales de quien lo usa. En un equipo debe tener su propia identidad (GitHub App) sin permisos de administración |
+| Identidad propia del agente en GitHub | P2. Hoy, en el contenedor, el agente recibe un token de grano fino de la misma cuenta, sin permiso para aprobar, administrar, disparar workflows ni tocar el CI. Una identidad propia (GitHub App) permitiría `prevent_self_review: true` y exigir la revisión del PR |
+| Gobernar las pruebas de las herramientas (`tests/`) | P1. Un PR puede cambiar o borrar pruebas de `dp` sin aprobación; los tests de dbt sí están gobernados (GOV-07). Gobernar todo `tests/` convertiría cada ajuste normal de pruebas en una aprobación; el siguiente paso es gobernar solo el borrado de pruebas |
 | Modelos incrementales | El volumen del reto no lo justifica. El diseño para BigQuery (partición, clustering, `merge` por llave con ventana de reproceso) está en `PROPUESTA.md` |
 
 ---

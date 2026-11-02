@@ -43,12 +43,14 @@ def run_build(select=None, full_refresh: bool = False) -> int:
 
 
 def cmd_build(args: argparse.Namespace) -> int:
-    if args.full_refresh and not os.environ.get("DP_OPERACION_APROBADA"):
-        # Destructivo: solo corre dentro del job del workflow `destructivo`, después de que un
-        # revisor aprueba en el environment. Fuera de ahí, se propone con `dp propose`.
-        print("build --full-refresh es una operación destructiva: propónla con `dp propose full-refresh --motivo ...`")
+    if args.full_refresh:
+        # Destructivo: `dp build` nunca lo ejecuta, sin excepciones por entorno ni variables. La
+        # única ruta es `dp execute-proposal`, que verifica la propuesta sellada y la aprobación
+        # del environment dentro del workflow `destructivo`.
+        print("build --full-refresh es una operación destructiva y `dp build` nunca la ejecuta: "
+              "propónla con `dp propose full-refresh --motivo ...`")
         return 2
-    return run_build(args.select, args.full_refresh)
+    return run_build(args.select)
 
 
 def cmd_certify_gate(args: argparse.Namespace) -> int:
@@ -490,7 +492,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_build = sub.add_parser("build", help="dbt build (modelos, tests y contratos) + snapshot de evidencia")
     p_build.add_argument("--select", help="selector de dbt")
-    p_build.add_argument("--full-refresh", action="store_true", help="solo en el workflow destructivo aprobado")
+    p_build.add_argument("--full-refresh", action="store_true",
+                         help="siempre se rechaza: la recarga completa solo la ejecuta `dp execute-proposal` aprobada")
     p_build.set_defaults(func=cmd_build)
 
     p_idem = sub.add_parser("verify-idempotency", help="corre todo dos veces y compara filas y contenido")

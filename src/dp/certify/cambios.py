@@ -6,9 +6,9 @@ commits ni del orden, así que el PR y el merge del mismo cambio producen la mis
 cualquier cambio distinto (o el mismo cambio modificado después de aprobarlo) produce otra.
 
 Son cambios gobernados los que rompen el contrato de un producto, los que debilitan el estándar
-(borrar reglas o tests, bajar severidad, editar la política) y los que tocan una ruta protegida:
-las rutas de CODEOWNERS en la versión base (el motor, el CI, la política y la configuración del
-agente).
+(borrar reglas o tests, bajar severidad, editar la política), los que tocan una ruta protegida
+(las rutas de CODEOWNERS en la versión base: el motor, el CI, la política y la configuración del
+agente) y los que modifican o borran una entrega de la réplica que ya existía.
 """
 
 from __future__ import annotations
@@ -118,6 +118,22 @@ def protected_changes(diff: bytes, codeowners: str) -> list:
         {"tipo": "ruta_protegida", "archivo": e["archivo"], "antes": e["antes"], "despues": e["despues"]}
         for e in parse_raw_diff(diff)
         if is_protected(e["archivo"], patterns)
+    ]
+
+
+# Las entregas de la réplica son de solo agregar (ver `dp.ingest`): una corrección llega como
+# entrega nueva. Agregar un archivo es libre; modificar o borrar uno que ya estaba en la versión
+# base es un cambio gobernado, venga de quien venga.
+REPLICA_DIR = "data/replica/"
+
+
+def replica_changes(diff: bytes) -> list:
+    """Archivos de entregas existentes que se modificaron o borraron, con el blob exacto antes y después."""
+    return [
+        {"tipo": "entrega_borrada" if e["estado"].startswith("D") else "entrega_modificada",
+         "archivo": e["archivo"], "antes": e["antes"], "despues": e["despues"]}
+        for e in parse_raw_diff(diff)
+        if e["archivo"].startswith(REPLICA_DIR) and not e["estado"].startswith("A")
     ]
 
 
