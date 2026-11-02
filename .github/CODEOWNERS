@@ -6,6 +6,11 @@
 /src/dp/certify/    @EmySalazar25
 /.github/           @EmySalazar25
 
+# La CLI rechaza la recarga completa y ejecuta lo destructivo solo con una propuesta aprobada;
+# propose.py genera la evidencia de cada propuesta.
+/src/dp/cli.py      @EmySalazar25
+/src/dp/propose.py  @EmySalazar25
+
 # Contexto y configuración de cada agente: cualquier cliente, no solo opencode.
 /AGENTS.md          @EmySalazar25
 /.agents/           @EmySalazar25

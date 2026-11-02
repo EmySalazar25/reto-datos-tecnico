@@ -360,7 +360,9 @@ def test_aprobacion_no_tapa_otras_fallas(tmp_path):
         ("docker/entrada.sh", True),
         ("scripts/configurar-github.sh", True),
         ("scripts/verificar-credencial-agente.sh", True),
-        ("src/dp/cli.py", False),
+        ("src/dp/cli.py", True),
+        ("src/dp/propose.py", True),
+        ("src/dp/ingest.py", False),
         ("data/replica/carga_1/fle_viaje.csv", False),  # las entregas se gobiernan por GOV-07 (solo agregar), no por ruta
         ("dbt/models/mart/logistica/embarques_mensual.sql", False),
         ("docs/opencode.json", False),
