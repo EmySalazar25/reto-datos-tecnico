@@ -388,6 +388,82 @@ def test_lee_el_diff_real_de_git(tmp_path):
     assert len(by_path["opencode.json"]["antes"]) == 40 and by_path["opencode.json"]["antes"] != by_path["opencode.json"]["despues"]
 
 
+# --- Entregas de la réplica: solo agregar (GOV-07, sin depender de la configuración del agente) ---
+
+CERO = "0" * 40
+
+
+def _entrada(path: str, antes: str, despues: str, estado: str) -> bytes:
+    return f":100644 100644 {antes} {despues} {estado}".encode() + b"\0" + path.encode() + b"\0"
+
+
+def test_entregas_sin_cambios_no_son_gobernadas(tmp_path):
+    base = base_manifest()
+    prod = certify(tmp_path, manifest=copy.deepcopy(base), **_gov_kwargs(tmp_path, base, b""))
+    assert _gov7(prod)["status"] == "PASS"
+
+
+def test_agregar_una_entrega_nueva_no_requiere_aprobacion(tmp_path):
+    base = base_manifest()
+    diff = _entrada("data/replica/carga_2/fle_viaje.csv", CERO, "b" * 40, "A")
+    prod = certify(tmp_path, manifest=copy.deepcopy(base), **_gov_kwargs(tmp_path, base, diff))
+    assert _gov7(prod)["status"] == "PASS"
+
+
+def test_modificar_una_entrega_existente_requiere_aprobacion(tmp_path):
+    base = base_manifest()
+    diff = _entrada("data/replica/carga_1/fle_viaje.csv", "a" * 40, "b" * 40, "M")
+    kwargs = _gov_kwargs(tmp_path, base, diff)
+    prod = certify(tmp_path / "a", manifest=copy.deepcopy(base), **kwargs)
+    assert _gov7(prod)["status"] == "FAIL" and prod["status"] == "NOT_CERTIFIED"
+    assert _gov7(prod)["evidence"] == [{"tipo": "entrega_modificada", "archivo": "data/replica/carga_1/fle_viaje.csv",
+                                        "antes": "a" * 40, "despues": "b" * 40}]
+    huella = prod["evaluation"]["cambios_gobernados"]["huella"]
+    approved = certify(tmp_path / "b", manifest=copy.deepcopy(base), approval={"huella": huella, "aprobado_por": "revisora"},
+                       **kwargs)
+    assert _gov7(approved)["status"] == "PASS"
+
+
+def test_borrar_una_entrega_existente_requiere_aprobacion(tmp_path):
+    base = base_manifest()
+    diff = _entrada("data/replica/carga_1/vta_cliente.csv", "a" * 40, CERO, "D")
+    prod = certify(tmp_path, manifest=copy.deepcopy(base), **_gov_kwargs(tmp_path, base, diff))
+    assert _gov7(prod)["status"] == "FAIL" and prod["status"] == "NOT_CERTIFIED"
+    assert _gov7(prod)["evidence"][0]["tipo"] == "entrega_borrada"
+
+
+def test_entregas_con_el_diff_real_de_git(tmp_path):
+    """Agregar es libre; modificar, borrar o renombrar (borrar + agregar) una entrega existente es gobernado."""
+    repo = tmp_path / "repo"
+    (repo / "data" / "replica" / "carga_1").mkdir(parents=True)
+
+    def git(*args):
+        return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True).stdout
+
+    git("init", "-q")
+    git("config", "user.email", "prueba@example.invalid")
+    git("config", "user.name", "prueba")
+    entrega = repo / "data" / "replica" / "carga_1"
+    for nombre in ("a.csv", "b.csv", "c.csv"):
+        (entrega / nombre).write_text(f"id\n{nombre}\n")
+    (repo / "notas.md").write_text("x\n")
+    git("add", ".")
+    git("commit", "-qm", "base")
+    (entrega / "a.csv").write_text("id\notro\n")
+    (entrega / "b.csv").unlink()
+    (entrega / "c.csv").rename(entrega / "c_renombrado.csv")
+    (repo / "data" / "replica" / "carga_2").mkdir()
+    (repo / "data" / "replica" / "carga_2" / "a.csv").write_text("id\nnuevo\n")
+    (repo / "notas.md").write_text("y\n")
+    git("add", "-A")
+    git("commit", "-qm", "cambio")
+    diff = git("diff", "--raw", "-z", "--no-abbrev", "--no-renames", "HEAD~1", "HEAD")
+    gobernados = {c["archivo"]: c["tipo"] for c in cambios.replica_changes(diff)}
+    assert gobernados == {"data/replica/carga_1/a.csv": "entrega_modificada",
+                          "data/replica/carga_1/b.csv": "entrega_borrada",
+                          "data/replica/carga_1/c.csv": "entrega_borrada"}
+
+
 def test_la_cli_ya_no_acepta_un_aprobador_como_texto():
     from dp.cli import build_parser
 

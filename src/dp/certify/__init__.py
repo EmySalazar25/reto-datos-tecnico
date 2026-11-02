@@ -3,4 +3,4 @@
 collect (evidence.py, graph.py) → evaluate (checks.py) → aggregate (engine.py) → render (render.py).
 """
 
-ENGINE_VERSION = "0.2.0"  # 0.2: aprobaciones de GOV-07 ligadas a la huella del cambio
+ENGINE_VERSION = "0.3.0"  # 0.3: GOV-07 gobierna modificar o borrar entregas de la réplica

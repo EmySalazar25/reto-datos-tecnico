@@ -315,7 +315,7 @@ def _approval_origin(a: dict) -> str:
     return ""
 
 
-@check("GOV-07", "governance", "Cambio controlado", "design", "Cambios que rompen el contrato, debilitan el estándar o tocan una ruta protegida requieren aprobación humana en el environment, ligada a la huella del cambio.")
+@check("GOV-07", "governance", "Cambio controlado", "design", "Cambios que rompen el contrato, debilitan el estándar, tocan una ruta protegida o modifican o borran una entrega de la réplica requieren aprobación humana en el environment, ligada a la huella del cambio.")
 def gov_07(ctx, p):
     if ctx.base_graph is None:
         return "UNKNOWN", "sin versión base para comparar (se evalúa en CI contra la rama destino)", [], None
