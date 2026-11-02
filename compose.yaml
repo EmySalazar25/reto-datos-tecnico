@@ -21,6 +21,12 @@ services:
     tmpfs:
       # Oculta el .venv de la máquina (otro sistema operativo o arquitectura) dentro del contenedor.
       - /workspace/.venv:mode=1777
+    environment:
+      # La única credencial que recibe el agente: un token de grano fino de alcance mínimo
+      # (Contents y Pull requests; sin Deployments, Administration, Actions de escritura ni
+      # Workflows), solo si la persona define DP_AGENTE_GH_TOKEN. El GH_TOKEN de la máquina
+      # nunca entra: esta línea lo reemplaza siempre.
+      GH_TOKEN: ${DP_AGENTE_GH_TOKEN:-}
     stdin_open: true
 
 volumes:

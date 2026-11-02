@@ -25,7 +25,9 @@ aprobación. Funciona como un 2FA: una persona con permiso aprueba en el environ
    opinión. Puedes explicar la razón que da la regla.
 3. Si la persona confirma, envía la solicitud (no ejecuta nada hasta que alguien apruebe):
    `gh workflow run destructivo.yml -f operacion=<operación> -f producto=<producto> -f motivo="<motivo>"`
-   El motivo describe la necesidad; nunca escribas en él qué debería decidirse.
+   El motivo describe la necesidad; nunca escribas en él qué debería decidirse. Si falla por
+   permisos (HTTP 403), es lo esperado: tu credencial no puede disparar workflows a propósito.
+   Entrégale a la persona ese comando exacto para que ella lo solicite.
 4. Un cambio de contrato no va por ese workflow: va por PR, subiendo `meta.contract_version`;
    CI lo marca como cambio gobernado (GOV-07) y espera aprobación.
 
