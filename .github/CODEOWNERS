@@ -5,6 +5,17 @@
 /standard/          @EmySalazar25
 /src/dp/certify/    @EmySalazar25
 /.github/           @EmySalazar25
+
+# Contexto y configuración de cada agente: cualquier cliente, no solo opencode.
 /AGENTS.md          @EmySalazar25
 /.agents/           @EmySalazar25
 /opencode.json      @EmySalazar25
+/CLAUDE.md          @EmySalazar25
+/.claude/           @EmySalazar25
+/.cursor/           @EmySalazar25
+/.mcp.json          @EmySalazar25
+
+# El contenedor decide qué credenciales recibe el agente (ADR 0008).
+/Dockerfile         @EmySalazar25
+/compose.yaml       @EmySalazar25
+/docker/            @EmySalazar25
