@@ -3,6 +3,13 @@
   "model": "opencode/deepseek-v4.1-flash-free",
   "small_model": "opencode/deepseek-v4.1-flash-free",
   "autoupdate": false,
+  "mcp": {
+    "dp": {
+      "type": "local",
+      "command": [".venv/bin/python", "-m", "dp.mcp"],
+      "enabled": true
+    }
+  },
   "permission": {
     "edit": {
       "*": "allow",
