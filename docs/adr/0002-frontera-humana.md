@@ -90,3 +90,7 @@ aprobación: es el entorno de desarrollo, y lo que llegue a `main` pasa por CI.
 - **Limitación: el CI de un PR corre con la versión del PR.** Un PR que modifica el workflow o el
   motor se juzga con esa versión modificada; hoy lo cierra el merge humano (y el token del agente
   no puede empujar cambios al CI). Correr la gobernanza desde la versión base queda pendiente.
+- **Limitación: las pruebas de las herramientas no están gobernadas.** Un PR puede cambiar o borrar
+  pruebas de `tests/` (las de `dp`) sin aprobación humana; los tests de dbt sí lo están (GOV-07
+  detecta tests borrados o con severidad rebajada). Gobernar todo `tests/` convertiría cada ajuste
+  normal de pruebas en una aprobación. Pendiente (P1): gobernar solo el borrado de pruebas.

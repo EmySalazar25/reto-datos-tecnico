@@ -472,6 +472,7 @@ Se recortó alcance para que lo entregado funcione completo. Detalle y prioridad
 | Contrato de máquina de `dp` (`--json` con sobre, códigos 0–5, `capacidades`, esquemas), servidor MCP y entrada para una persona junior (primeros pasos, glosario, tutorial) | P1, propuesto en el [ADR 0007](docs/adr/0007-como-se-consume-el-agente.md). Hoy la CLI ya expone todas las herramientas al agente y la frontera humana vale para cualquier cliente |
 | Monitoreo programado | P1. El workflow existe para PR y `main`; una corrida con cron es directa cuando haya entregas reales |
 | Identidad propia del agente en GitHub | P2. Hoy, en el contenedor, el agente recibe un token de grano fino de la misma cuenta, sin permiso para aprobar, administrar, disparar workflows ni tocar el CI. Una identidad propia (GitHub App) permitiría `prevent_self_review: true` y exigir la revisión del PR |
+| Gobernar las pruebas de las herramientas (`tests/`) | P1. Un PR puede cambiar o borrar pruebas de `dp` sin aprobación; los tests de dbt sí están gobernados (GOV-07). Gobernar todo `tests/` convertiría cada ajuste normal de pruebas en una aprobación; el siguiente paso es gobernar solo el borrado de pruebas |
 | Modelos incrementales | El volumen del reto no lo justifica. El diseño para BigQuery (partición, clustering, `merge` por llave con ventana de reproceso) está en `PROPUESTA.md` |
 
 ---
